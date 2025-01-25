@@ -41,7 +41,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
     def choiceStyleSheet(self) -> str:
         return str(self._organizer.pluginSetting(self.name(), "choice_style_sheet"))
 
-    def diabledChoiceStyleSheet(self) -> str:
+    def disabledChoiceStyleSheet(self) -> str:
         return str(self._organizer.pluginSetting(self.name(), "disabled_choice_style_sheet"))
 
     def settings(self) -> List[mobase.PluginSetting]:
@@ -186,7 +186,7 @@ class FomodChoice():
         tooltip = self.widget.toolTip()
         self.widget.setToolTip("You previously selected this choice when you installed this mod.\n\n" + tooltip)
         if plugin := RememberModChoicesPlugin.instance:
-            styleSheet = plugin.choiceStyleSheet() if self.widget.isEnabled() else plugin.diabledChoiceStyleSheet()
+            styleSheet = plugin.choiceStyleSheet() if self.widget.isEnabled() else plugin.disabledChoiceStyleSheet()
             self.widget.setStyleSheet(f"{self.widget.__class__.__name__}  {{ {styleSheet} }}")
 
 class FomodGroup():
@@ -205,10 +205,59 @@ class FomodStep():
 class FomodInstallerDialog():
     current: "FomodInstallerDialog | None" = None
 
+    def onDestroyed(self) -> None:
+        if FomodInstallerDialog.current != self:
+            return
+        
+        log("FomodInstallerDialog destroyed")
+        FomodInstallerDialog.current = None
+
+        if self.destroyed:
+            log("FomodInstallerDialog: not saving, window destroy event already handled")
+            return
+        self.destroyed = True
+
+        if not self.installClicked:
+            log("FomodInstallerDialog: not saving, install button was not clicked")
+            return
+
+        if not self.saveData:
+            log("FomodInstallerDialog: not saving, save data is missing")
+            return
+
+        path = makeSavePath(self.windowTitle)
+        with open(path, "w") as file:
+            json.dump(self.saveData.toDict(), file, indent=4)
+        log(f"FomodInstallerDialog: data saved into '{path}'")
+
     def __init__(self, widget: QWidget):
         self.widget = widget
+        self.widget.destroyed.connect(self.onDestroyed)
+        self.destroyed = False
+        self.installClicked = False
+        self.windowTitle = widget.windowTitle()
+        self.prevButton = self.widget.findChild(QPushButton, "prevBtn", Qt.FindChildOption.FindChildrenRecursively)
+        self.nextButton = self.widget.findChild(QPushButton, "nextBtn", Qt.FindChildOption.FindChildrenRecursively)
         self.saveData: FomodSave | None = None
         dumpChildrenWriteFile(self.widget)
+
+    def installHandlers(self) -> None:
+        for button in [self.prevButton, self.nextButton]:
+            if not button:
+                log(f"Failed to find prev or next button in dialog")
+                continue
+            button.pressed.connect(self.updateSaveWithCurrentStep)
+            button.clicked.connect(self.applySaveToStep)
+
+        if self.nextButton:
+            self.nextButton.clicked.connect(self.onNextButtonClicked)
+
+    def onNextButtonClicked(self) -> None:
+        # TODO: this wouldn't work for non-English UI. 
+        log(f"onNextButtonClicked '{self.nextButton.text()}'")
+        if self.nextButton.text() == "Install":
+            self.installClicked = True
+            log(f"onNextButtonClicked installClicked = True")
 
     def loadSave(self) -> None:
         if self.saveData:
@@ -216,7 +265,7 @@ class FomodInstallerDialog():
         
         data: Dict[str, object] | None
         try:
-            with open(makeSavePath(self.widget.windowTitle()), "r") as file:
+            with open(makeSavePath(self.windowTitle), "r") as file:
                 data = json.load(file)
         except FileNotFoundError:
             data = None
@@ -228,9 +277,6 @@ class FomodInstallerDialog():
         if isinstance(data, dict):
             self.saveData = FomodSave(data)
 
-    def windowTitle(self) -> str:
-        return self.widget.windowTitle()
-    
     def updateSaveWithCurrentStep(self) -> None:
         step = self.queryStep()
         dumpStep(step)
@@ -251,9 +297,6 @@ class FomodInstallerDialog():
                 saveChoice.isChecked = choice.isChecked()
                 saveGroup.choices.append(saveChoice)
             saveStep.groups.append(saveGroup)
-
-        with open(makeSavePath(self.widget.windowTitle()), "w") as file:
-            json.dump(self.saveData.toDict(), file, indent=4)
 
     def applySaveToStep(self) -> None:
         self.loadSave()
@@ -303,18 +346,6 @@ class FomodInstallerDialog():
 
         return step
     
-    def prevButton(self) -> QPushButton | None:
-        return self.widget.findChild(QPushButton, "prevBtn", Qt.FindChildOption.FindChildrenRecursively)
-    
-    def nextButton(self) -> QPushButton | None:
-        return self.widget.findChild(QPushButton, "nextBtn", Qt.FindChildOption.FindChildrenRecursively)
-
-    def isValid(self) -> bool:
-        try:
-            return self.widget.isVisible()
-        except RuntimeError:
-            return False
-
 def dumpStep(step: FomodStep) -> None:
     log(f"Step title: '{step.title}'")
     for group in step.groups:
@@ -322,24 +353,12 @@ def dumpStep(step: FomodStep) -> None:
         for choice in group.choices:
             log(f"- Choice: '{choice.text()}, checked: {choice.isChecked()}'")
 
-def updateSaveFromCurrentStep():
-    if dialog := FomodInstallerDialog.current:
-        dialog.updateSaveWithCurrentStep()
-
-def applySaveToStep():
-    if dialog := FomodInstallerDialog.current:
-        log("applySaveToStep")
-        dialog.applySaveToStep()
-
 def findInstallerDialog():
-    if FomodInstallerDialog.current != None:
-        if FomodInstallerDialog.current.isValid():
-            return
-        log(f"Clear fomod installer dialog")
-        FomodInstallerDialog.current = None
+    if FomodInstallerDialog.current:
+        return
 
     for widget in QApplication.topLevelWidgets():
-        if widget.objectName().startswith("FomodInstallerDialog"):
+        if widget.objectName() == "FomodInstallerDialog":
             FomodInstallerDialog.current = FomodInstallerDialog(widget)
             log(f"Found install window {widget}")
             break
@@ -349,15 +368,10 @@ def findInstallerDialog():
         return
     
     dialog.applySaveToStep()
+    dialog.installHandlers()
 
-    for button in [dialog.prevButton(), dialog.nextButton()]:
-        if not button:
-            log(f"Failed to find prev or next button in dialog")
-            continue
-        button.pressed.connect(updateSaveFromCurrentStep)
-        button.clicked.connect(applySaveToStep)
-
-def focusWindowChanged(window: QWindow):
+def focusWindowChanged(window: QWindow | None):
+    log(f"focusWindowChanged to: {window}")
     if window != None:
         findInstallerDialog()
 
