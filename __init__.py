@@ -187,7 +187,7 @@ class FomodChoice():
         self.widget.setToolTip("You previously selected this choice when you installed this mod.\n\n" + tooltip)
         if plugin := RememberModChoicesPlugin.instance:
             styleSheet = plugin.choiceStyleSheet() if self.widget.isEnabled() else plugin.disabledChoiceStyleSheet()
-            self.widget.setStyleSheet(f"{self.widget.__class__.__name__}  {{ {styleSheet} }}")
+            self.widget.setStyleSheet(f"{self.widget.__class__.__name__} {{ {styleSheet} }}")
 
 class FomodGroup():
     def __init__(self, groupBox: QGroupBox):
@@ -221,13 +221,13 @@ class FomodInstallerDialog():
             log("FomodInstallerDialog: not saving, install button was not clicked")
             return
 
-        if not self.saveData:
+        if not self.updatedSaveData:
             log("FomodInstallerDialog: not saving, save data is missing")
             return
 
         path = makeSavePath(self.windowTitle)
         with open(path, "w") as file:
-            json.dump(self.saveData.toDict(), file, indent=4)
+            json.dump(self.updatedSaveData.toDict(), file, indent=4)
         log(f"FomodInstallerDialog: data saved into '{path}'")
 
     def __init__(self, widget: QWidget):
@@ -239,6 +239,7 @@ class FomodInstallerDialog():
         self.prevButton = self.widget.findChild(QPushButton, "prevBtn", Qt.FindChildOption.FindChildrenRecursively)
         self.nextButton = self.widget.findChild(QPushButton, "nextBtn", Qt.FindChildOption.FindChildrenRecursively)
         self.saveData: FomodSave | None = None
+        self.updatedSaveData: FomodSave | None = None
         dumpChildrenWriteFile(self.widget)
 
     def installHandlers(self) -> None:
@@ -276,17 +277,19 @@ class FomodInstallerDialog():
 
         if isinstance(data, dict):
             self.saveData = FomodSave(data)
+            self.updatedSaveData = FomodSave(data)
 
     def updateSaveWithCurrentStep(self) -> None:
         step = self.queryStep()
         dumpStep(step)
 
-        if not self.saveData:
-            self.saveData = FomodSave()
+        self.loadSave()
+        if not self.updatedSaveData:
+            self.updatedSaveData = FomodSave()
 
         saveStep = FomodStepSave()
         saveStep.title = step.title
-        self.saveData.upsertStep(saveStep)
+        self.updatedSaveData.upsertStep(saveStep)
 
         for group in step.groups:
             saveGroup = FomodGroupSave()
