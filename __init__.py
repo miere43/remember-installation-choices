@@ -240,6 +240,7 @@ class FomodInstallerDialog():
         self.nextButton = self.widget.findChild(QPushButton, "nextBtn", Qt.FindChildOption.FindChildrenRecursively)
         self.saveData: FomodSave | None = None
         self.updatedSaveData: FomodSave | None = None
+        self.loadSave()
         dumpChildrenWriteFile(self.widget)
 
     def installHandlers(self) -> None:
@@ -283,7 +284,6 @@ class FomodInstallerDialog():
         step = self.queryStep()
         dumpStep(step)
 
-        self.loadSave()
         if not self.updatedSaveData:
             self.updatedSaveData = FomodSave()
 
@@ -302,7 +302,6 @@ class FomodInstallerDialog():
             saveStep.groups.append(saveGroup)
 
     def applySaveToStep(self) -> None:
-        self.loadSave()
         if not self.saveData:
             return
 
