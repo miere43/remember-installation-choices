@@ -426,6 +426,8 @@ class FomodInstallerDialog():
                 group.choices.append(FomodChoice(self.plugin, choice))
             for choice in groupBox.findChildren(QRadioButton, "choice", Qt.FindChildOption.FindDirectChildrenOnly):
                 group.choices.append(FomodChoice(self.plugin, choice))
+            for choice in groupBox.findChildren(QRadioButton, "none", Qt.FindChildOption.FindDirectChildrenOnly):
+                group.choices.append(FomodChoice(self.plugin, choice))
     
         dumpStep(self.currentStep)
 
