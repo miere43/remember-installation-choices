@@ -13,14 +13,13 @@ def log(s: str) -> None:
     print(s, file=sys.stderr)
 
 class RememberModChoicesPlugin(mobase.IPlugin):
-    instance: "RememberModChoicesPlugin | None" = None
-
     def __init__(self):
         super().__init__()
+        self.currentDialog: FomodInstallerDialog | None = None
 
     def init(self, organizer: mobase.IOrganizer):
         self._organizer = organizer
-        organizer.onUserInterfaceInitialized(lambda a: self.onUserInterfaceInitialized(a))
+        organizer.onUserInterfaceInitialized(lambda a: self._onUserInterfaceInitialized(a))
         return True
 
     def name(self) -> str:
@@ -59,10 +58,25 @@ class RememberModChoicesPlugin(mobase.IPlugin):
             mobase.PluginSetting("hint_choice_disabled_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(255, 255, 0, 0.15)"),
         ]
     
-    def onUserInterfaceInitialized(self, mainWindow: QMainWindow):
+    def _onUserInterfaceInitialized(self, mainWindow: QMainWindow):
         app = QApplication.instance()
         if app and isinstance(app, QGuiApplication):
-            app.focusWindowChanged.connect(focusWindowChanged)
+            app.focusWindowChanged.connect(self._focusWindowChanged)
+
+    def _focusWindowChanged(self, window: QWindow | None):
+        log(f"focusWindowChanged to: {window}")
+        if window != None:
+            self._findInstallerDialog()
+
+    def _findInstallerDialog(self):
+        if self.currentDialog:
+            return
+
+        for widget in QApplication.topLevelWidgets():
+            if widget.objectName() == "FomodInstallerDialog":
+                self.currentDialog = FomodInstallerDialog(self, widget)
+                log(f"Found install window {widget}")
+                break
 
 def dumpChildrenWriteFile(obj: QObject):
     with open(os.path.join(currentFileFolder, "debug_dump_children.json"), "w") as file:
@@ -150,9 +164,6 @@ class FomodStepSave():
             "title": self.title,
             "groups": list(map(lambda x: x.toDict(), self.groups)),
         }
-    
-def makeSavePath(modName: str) -> str:
-    return os.path.join(currentFileFolder, f"{modName}.json")
 
 class FomodSave():
     def __init__(self, save: Dict[str, object] | None = None):
@@ -181,7 +192,8 @@ class FomodSave():
         }
 
 class FomodChoice():
-    def __init__(self, widget: QRadioButton | QCheckBox):
+    def __init__(self, plugin: RememberModChoicesPlugin, widget: QRadioButton | QCheckBox):
+        self.plugin = plugin
         self.widget = widget
         self.widget.toggled.connect(self._updateVisuals)
         self.originalToolTip = self.widget.toolTip()
@@ -195,15 +207,13 @@ class FomodChoice():
     
     def _usePreviousChoiceVisuals(self) -> None:
         self.widget.setToolTip("You previously selected this choice when you installed this mod.\n\n" + self.originalToolTip)
-        if plugin := RememberModChoicesPlugin.instance:
-            styleSheet = plugin.previousChoiceStyleSheet() if self.widget.isEnabled() else plugin.disabledPreviousChoiceStyleSheet()
-            self.widget.setStyleSheet(f"{self.widget.__class__.__name__} {{ {styleSheet} }}")
+        styleSheet = self.plugin.previousChoiceStyleSheet() if self.widget.isEnabled() else self.plugin.disabledPreviousChoiceStyleSheet()
+        self.widget.setStyleSheet(f"{self.widget.__class__.__name__} {{ {styleSheet} }}")
 
     def _useHintVisuals(self) -> None:
         self.widget.setToolTip("This choice doesn't match your previous choice when you installed this mod.\n\n" + self.originalToolTip)
-        if plugin := RememberModChoicesPlugin.instance:
-            styleSheet = plugin.hintChoiceStyleSheet() if self.widget.isEnabled() else plugin.disabledHintChoiceStyleSheet()
-            self.widget.setStyleSheet(f"{self.widget.__class__.__name__} {{ {styleSheet} }}")
+        styleSheet = self.plugin.hintChoiceStyleSheet() if self.widget.isEnabled() else self.plugin.disabledHintChoiceStyleSheet()
+        self.widget.setStyleSheet(f"{self.widget.__class__.__name__} {{ {styleSheet} }}")
 
     def _clearVisuals(self) -> None:
         self.widget.setToolTip(self.originalToolTip)
@@ -249,34 +259,8 @@ class FomodStep():
             group._destroy()
 
 class FomodInstallerDialog():
-    current: "FomodInstallerDialog | None" = None
-
-    def onDestroyed(self) -> None:
-        if FomodInstallerDialog.current != self:
-            return
-        
-        log("FomodInstallerDialog destroyed")
-        FomodInstallerDialog.current = None
-
-        if self.destroyed:
-            log("FomodInstallerDialog: not saving, window destroy event already handled")
-            return
-        self.destroyed = True
-
-        if not self.installClicked:
-            log("FomodInstallerDialog: not saving, install button was not clicked")
-            return
-
-        if not self.updatedSaveData:
-            log("FomodInstallerDialog: not saving, save data is missing")
-            return
-
-        path = makeSavePath(self.windowTitle)
-        with open(path, "w") as file:
-            json.dump(self.updatedSaveData.toDict(), file, indent=4)
-        log(f"FomodInstallerDialog: data saved into '{path}'")
-
-    def __init__(self, widget: QWidget):
+    def __init__(self, plugin: RememberModChoicesPlugin, widget: QWidget):
+        self.plugin = plugin
         self.widget = widget
         self.widget.destroyed.connect(self.onDestroyed)
         self.destroyed = False
@@ -291,6 +275,35 @@ class FomodInstallerDialog():
         self.loadSave()
         self.loadStepAndApplySaveState()
         self.installButtonHandlers()
+
+    def makeSavePath(self) -> str:
+        path = json.dumps(["savePath", self.plugin._organizer.managedGame().gameName(), self.plugin._organizer.profileName(), self.windowTitle])
+        log(f"Using save path: {path}")
+        return path
+
+    def onDestroyed(self) -> None:
+        if self.plugin.currentDialog == self:
+            self.plugin.currentDialog = None
+
+        log("FomodInstallerDialog destroyed")
+
+        if self.destroyed:
+            log("FomodInstallerDialog: not saving, window destroy event already handled")
+            return
+        self.destroyed = True
+
+        if not self.installClicked:
+            log("FomodInstallerDialog: not saving, install button was not clicked")
+            return
+
+        if not self.updatedSaveData:
+            log("FomodInstallerDialog: not saving, save data is missing")
+            return
+
+        path = self.makeSavePath()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.plugin._organizer.setPersistent(self.plugin.name(), path, self.updatedSaveData.toDict())
+        log(f"FomodInstallerDialog: data saved into '{path}'")
 
     def installButtonHandlers(self) -> None:
         for button in [self.prevButton, self.nextButton]:
@@ -314,17 +327,7 @@ class FomodInstallerDialog():
         if self.saveData:
             return
         
-        data: Dict[str, object] | None
-        try:
-            with open(makeSavePath(self.windowTitle), "r") as file:
-                data = json.load(file)
-        except FileNotFoundError:
-            data = None
-            log("The file does not exist.")
-        except json.JSONDecodeError:
-            data = None
-            log("The file contains invalid JSON.")
-
+        data = self.plugin._organizer.persistent(self.plugin.name(), self.makeSavePath())
         if isinstance(data, dict):
             self.saveData = FomodSave(data)
             self.updatedSaveData = FomodSave(data)
@@ -391,9 +394,9 @@ class FomodInstallerDialog():
             self.currentStep.groups.append(group)
 
             for choice in groupBox.findChildren(QCheckBox, "choice", Qt.FindChildOption.FindDirectChildrenOnly):
-                group.choices.append(FomodChoice(choice))
+                group.choices.append(FomodChoice(self.plugin, choice))
             for choice in groupBox.findChildren(QRadioButton, "choice", Qt.FindChildOption.FindDirectChildrenOnly):
-                group.choices.append(FomodChoice(choice))
+                group.choices.append(FomodChoice(self.plugin, choice))
     
         dumpStep(self.currentStep)
 
@@ -404,26 +407,5 @@ def dumpStep(step: FomodStep) -> None:
         for choice in group.choices:
             log(f"- Choice: '{choice.text()}, checked: {choice.isChecked()}'")
 
-def findInstallerDialog():
-    if FomodInstallerDialog.current:
-        return
-
-    for widget in QApplication.topLevelWidgets():
-        if widget.objectName() == "FomodInstallerDialog":
-            FomodInstallerDialog.current = FomodInstallerDialog(widget)
-            log(f"Found install window {widget}")
-            break
-
-    dialog = FomodInstallerDialog.current
-    if dialog == None:
-        return
-
-def focusWindowChanged(window: QWindow | None):
-    log(f"focusWindowChanged to: {window}")
-    if window != None:
-        findInstallerDialog()
-
 def createPlugin() -> mobase.IPlugin:
-    plugin = RememberModChoicesPlugin()
-    RememberModChoicesPlugin.instance = plugin
-    return plugin
+    return RememberModChoicesPlugin()
