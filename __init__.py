@@ -4,7 +4,7 @@ import json
 import mobase
 from typing import Dict, Iterable, List, cast
 from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox
-from PyQt6.QtCore import QObject, Qt
+from PyQt6.QtCore import QObject, Qt, QMetaObject
 from PyQt6.QtGui import QWindow, QGuiApplication
 
 currentFileFolder = os.path.dirname(os.path.realpath(__file__))
@@ -38,17 +38,25 @@ class RememberModChoicesPlugin(mobase.IPlugin):
     def isActive(self) -> bool:
         return bool(self._organizer.pluginSetting(self.name(), "enabled"))
 
-    def choiceStyleSheet(self) -> str:
-        return str(self._organizer.pluginSetting(self.name(), "choice_style_sheet"))
+    def previousChoiceStyleSheet(self) -> str:
+        return str(self._organizer.pluginSetting(self.name(), "previous_choice_style_sheet"))
 
-    def disabledChoiceStyleSheet(self) -> str:
-        return str(self._organizer.pluginSetting(self.name(), "disabled_choice_style_sheet"))
+    def disabledPreviousChoiceStyleSheet(self) -> str:
+        return str(self._organizer.pluginSetting(self.name(), "previous_choice_disabled_style_sheet"))
+
+    def hintChoiceStyleSheet(self) -> str:
+        return str(self._organizer.pluginSetting(self.name(), "hint_choice_style_sheet"))
+
+    def disabledHintChoiceStyleSheet(self) -> str:
+        return str(self._organizer.pluginSetting(self.name(), "hint_choice_disabled_style_sheet"))
 
     def settings(self) -> List[mobase.PluginSetting]:
         return [
             mobase.PluginSetting("enabled", "enable this plugin", True),
-            mobase.PluginSetting("choice_style_sheet", "Style sheet to apply to clickable choices", "background-color: rgba(0, 255, 0, 0.25)"),
-            mobase.PluginSetting("disabled_choice_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(0, 255, 0, 0.15)"),
+            mobase.PluginSetting("previous_choice_style_sheet", "Style sheet to apply to clickable choices", "background-color: rgba(0, 255, 0, 0.25)"),
+            mobase.PluginSetting("previous_choice_disabled_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(0, 255, 0, 0.15)"),
+            mobase.PluginSetting("hint_choice_style_sheet", "Style sheet to apply to clickable choices", "background-color: rgba(255, 255, 0, 0.25)"),
+            mobase.PluginSetting("hint_choice_disabled_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(255, 255, 0, 0.15)"),
         ]
     
     def onUserInterfaceInitialized(self, mainWindow: QMainWindow):
@@ -175,6 +183,9 @@ class FomodSave():
 class FomodChoice():
     def __init__(self, widget: QRadioButton | QCheckBox):
         self.widget = widget
+        self.widget.toggled.connect(self._updateVisuals)
+        self.originalToolTip = self.widget.toolTip()
+        self.save: FomodChoiceSave | None = None
 
     def text(self) -> str:
         return self.widget.text()
@@ -182,12 +193,39 @@ class FomodChoice():
     def isChecked(self) -> bool:
         return self.widget.isChecked()
     
-    def markAsPreviouslyChecked(self) -> None:
-        tooltip = self.widget.toolTip()
-        self.widget.setToolTip("You previously selected this choice when you installed this mod.\n\n" + tooltip)
+    def _usePreviousChoiceVisuals(self) -> None:
+        self.widget.setToolTip("You previously selected this choice when you installed this mod.\n\n" + self.originalToolTip)
         if plugin := RememberModChoicesPlugin.instance:
-            styleSheet = plugin.choiceStyleSheet() if self.widget.isEnabled() else plugin.disabledChoiceStyleSheet()
+            styleSheet = plugin.previousChoiceStyleSheet() if self.widget.isEnabled() else plugin.disabledPreviousChoiceStyleSheet()
             self.widget.setStyleSheet(f"{self.widget.__class__.__name__} {{ {styleSheet} }}")
+
+    def _useHintVisuals(self) -> None:
+        self.widget.setToolTip("This choice doesn't match your previous choice when you installed this mod.\n\n" + self.originalToolTip)
+        if plugin := RememberModChoicesPlugin.instance:
+            styleSheet = plugin.hintChoiceStyleSheet() if self.widget.isEnabled() else plugin.disabledHintChoiceStyleSheet()
+            self.widget.setStyleSheet(f"{self.widget.__class__.__name__} {{ {styleSheet} }}")
+
+    def _clearVisuals(self) -> None:
+        self.widget.setToolTip(self.originalToolTip)
+        self.widget.setStyleSheet(None)
+
+    def setSave(self, save: FomodChoiceSave) -> None:
+        self.save = save
+        self._updateVisuals()
+
+    def _updateVisuals(self) -> None:
+        if self.save and self.save.isChecked and isinstance(self.widget, QRadioButton):
+            self._usePreviousChoiceVisuals()
+        elif self.save and self.save.isChecked != self.isChecked():
+            self._useHintVisuals()
+        elif self.save and self.save.isChecked:
+            self._usePreviousChoiceVisuals()
+        else:
+            self._clearVisuals()
+
+    def _destroy(self) -> None:
+        self._clearVisuals()
+        self.widget.toggled.disconnect(self._updateVisuals)
 
 class FomodGroup():
     def __init__(self, groupBox: QGroupBox):
@@ -196,11 +234,19 @@ class FomodGroup():
 
     def title(self) -> str:
         return self.groupBox.title()
+    
+    def _destroy(self) -> None:
+        for choice in self.choices:
+            choice._destroy()
 
 class FomodStep():
     def __init__(self):
         self.title = ""
         self.groups: List[FomodGroup] = []
+
+    def _destroy(self) -> None:
+        for group in self.groups:
+            group._destroy()
 
 class FomodInstallerDialog():
     current: "FomodInstallerDialog | None" = None
@@ -240,16 +286,19 @@ class FomodInstallerDialog():
         self.nextButton = self.widget.findChild(QPushButton, "nextBtn", Qt.FindChildOption.FindChildrenRecursively)
         self.saveData: FomodSave | None = None
         self.updatedSaveData: FomodSave | None = None
-        self.loadSave()
+        self.currentStep: FomodStep | None = None
         dumpChildrenWriteFile(self.widget)
+        self.loadSave()
+        self.loadStepAndApplySaveState()
+        self.installButtonHandlers()
 
-    def installHandlers(self) -> None:
+    def installButtonHandlers(self) -> None:
         for button in [self.prevButton, self.nextButton]:
             if not button:
                 log(f"Failed to find prev or next button in dialog")
                 continue
             button.pressed.connect(self.updateSaveWithCurrentStep)
-            button.clicked.connect(self.applySaveToStep)
+            button.clicked.connect(self.loadStepAndApplySaveState)
 
         if self.nextButton:
             self.nextButton.clicked.connect(self.onNextButtonClicked)
@@ -281,17 +330,16 @@ class FomodInstallerDialog():
             self.updatedSaveData = FomodSave(data)
 
     def updateSaveWithCurrentStep(self) -> None:
-        step = self.queryStep()
-        dumpStep(step)
-
         if not self.updatedSaveData:
             self.updatedSaveData = FomodSave()
+        if not self.currentStep:
+            return
 
         saveStep = FomodStepSave()
-        saveStep.title = step.title
+        saveStep.title = self.currentStep.title
         self.updatedSaveData.upsertStep(saveStep)
 
-        for group in step.groups:
+        for group in self.currentStep.groups:
             saveGroup = FomodGroupSave()
             saveGroup.title = group.title()
             for choice in group.choices:
@@ -301,29 +349,30 @@ class FomodInstallerDialog():
                 saveGroup.choices.append(saveChoice)
             saveStep.groups.append(saveGroup)
 
-    def applySaveToStep(self) -> None:
-        if not self.saveData:
+    def loadStepAndApplySaveState(self) -> None:
+        self.loadStep()
+        if not self.currentStep or not self.saveData:
             return
 
-        step = self.queryStep()
-        dumpStep(step)
-        
-        saveStep = self.saveData.stepByTitle(step.title)
+        saveStep = self.saveData.stepByTitle(self.currentStep.title)
         if not saveStep:
             return
         
-        for group in step.groups:
+        for group in self.currentStep.groups:
             saveGroup = saveStep.groupByTitle(group.title())
             if saveGroup == None:
                 continue
 
             for choice in group.choices:
-                saveChoice = saveGroup.choiceByText(choice.text())
-                if saveChoice and saveChoice.isChecked:
-                    choice.markAsPreviouslyChecked()
+                if saveChoice := saveGroup.choiceByText(choice.text()):
+                    choice.setSave(saveChoice)
 
-    def queryStep(self) -> FomodStep:
-        step = FomodStep()
+    def loadStep(self) -> None:
+        if self.currentStep:
+            self.currentStep._destroy()
+
+        self.currentStep = FomodStep()
+
         stepsStack = self.widget.findChild(QStackedWidget, "stepsStack", Qt.FindChildOption.FindChildrenRecursively)
         
         visibleStepWidget: QGroupBox | None = None
@@ -334,20 +383,20 @@ class FomodInstallerDialog():
 
         if not visibleStepWidget:
             log(f"Failed to find visible step widget")
-            return step
+            return
         
-        step.title = visibleStepWidget.title()
+        self.currentStep.title = visibleStepWidget.title()
         for groupBox in visibleStepWidget.findChildren(QGroupBox, None, Qt.FindChildOption.FindChildrenRecursively):
             group = FomodGroup(groupBox)
-            step.groups.append(group)
+            self.currentStep.groups.append(group)
 
             for choice in groupBox.findChildren(QCheckBox, "choice", Qt.FindChildOption.FindDirectChildrenOnly):
                 group.choices.append(FomodChoice(choice))
             for choice in groupBox.findChildren(QRadioButton, "choice", Qt.FindChildOption.FindDirectChildrenOnly):
                 group.choices.append(FomodChoice(choice))
-
-        return step
     
+        dumpStep(self.currentStep)
+
 def dumpStep(step: FomodStep) -> None:
     log(f"Step title: '{step.title}'")
     for group in step.groups:
@@ -368,9 +417,6 @@ def findInstallerDialog():
     dialog = FomodInstallerDialog.current
     if dialog == None:
         return
-    
-    dialog.applySaveToStep()
-    dialog.installHandlers()
 
 def focusWindowChanged(window: QWindow | None):
     log(f"focusWindowChanged to: {window}")
