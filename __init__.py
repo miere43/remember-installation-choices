@@ -4,7 +4,7 @@ import sys
 import json
 import mobase
 from typing import Dict, Iterable, List, cast
-from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox
+from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
 from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtGui import QWindow, QGuiApplication
 
@@ -266,16 +266,25 @@ class FomodInstallerDialog():
         self.widget.destroyed.connect(self.onDestroyed)
         self.destroyed = False
         self.installClicked = False
-        self.windowTitle = widget.windowTitle()
+        self.modName = ''
         self.prevButton = self.widget.findChild(QPushButton, "prevBtn", Qt.FindChildOption.FindChildrenRecursively)
         self.nextButton = self.widget.findChild(QPushButton, "nextBtn", Qt.FindChildOption.FindChildrenRecursively)
         self.saveData: FomodSave | None = None
         self.updatedSaveData: FomodSave | None = None
         self.currentStep: FomodStep | None = None
         dumpChildrenWriteFile(self.widget)
+        self.loadModName()
         self.loadSave()
         self.loadStepAndApplySaveState()
         self.installButtonHandlers()
+
+    def loadModName(self) -> None:
+        nameCombo = self.widget.findChild(QComboBox, "nameCombo", Qt.FindChildOption.FindChildrenRecursively)
+        if not nameCombo:
+            self.modName = self.widget.windowTitle()
+            log(f"Failed to find nameCombo, using window title as mod name: '{self.modName}'")
+            return
+        self.modName = nameCombo.currentText()
 
     def escapeFileName(self, fileName: str) -> str:
         return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
@@ -286,7 +295,7 @@ class FomodInstallerDialog():
             "saves",
             self.escapeFileName(self.plugin._organizer.managedGame().gameName()),
             self.escapeFileName(self.plugin._organizer.profileName()),
-            self.escapeFileName(self.windowTitle) + ".json",
+            self.escapeFileName(self.modName) + ".json",
         )
         log(f"Using save path: {path}")
         return path
@@ -344,7 +353,7 @@ class FomodInstallerDialog():
             with open(savePath, "r") as file:
                 data = json.load(file)
         except FileNotFoundError:
-            log(f"No save for '{self.windowTitle}', file path: '{savePath}'")
+            log(f"No save for '{self.modName}', file path: '{savePath}'")
         except json.JSONDecodeError as e:
             log(f"Failed to decode JSON for file '{savePath}': '{e.msg}'")
 
