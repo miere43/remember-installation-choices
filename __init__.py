@@ -1,10 +1,11 @@
 import os
+import re
 import sys
 import json
 import mobase
 from typing import Dict, Iterable, List, cast
 from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox
-from PyQt6.QtCore import QObject, Qt, QMetaObject
+from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtGui import QWindow, QGuiApplication
 
 currentFileFolder = os.path.dirname(os.path.realpath(__file__))
@@ -276,8 +277,17 @@ class FomodInstallerDialog():
         self.loadStepAndApplySaveState()
         self.installButtonHandlers()
 
+    def escapeFileName(self, fileName: str) -> str:
+        return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
+
     def makeSavePath(self) -> str:
-        path = json.dumps(["savePath", self.plugin._organizer.managedGame().gameName(), self.plugin._organizer.profileName(), self.windowTitle])
+        path = os.path.join(
+            currentFileFolder,
+            "saves",
+            self.escapeFileName(self.plugin._organizer.managedGame().gameName()),
+            self.escapeFileName(self.plugin._organizer.profileName()),
+            self.escapeFileName(self.windowTitle) + ".json",
+        )
         log(f"Using save path: {path}")
         return path
 
@@ -302,7 +312,8 @@ class FomodInstallerDialog():
 
         path = self.makeSavePath()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.plugin._organizer.setPersistent(self.plugin.name(), path, self.updatedSaveData.toDict())
+        with open(path, "w") as file:
+            json.dump(self.updatedSaveData.toDict(), file, indent=4)
         log(f"FomodInstallerDialog: data saved into '{path}'")
 
     def installButtonHandlers(self) -> None:
@@ -327,7 +338,16 @@ class FomodInstallerDialog():
         if self.saveData:
             return
         
-        data = self.plugin._organizer.persistent(self.plugin.name(), self.makeSavePath())
+        savePath = self.makeSavePath()
+        data: object | None = None
+        try:
+            with open(savePath, "r") as file:
+                data = json.load(file)
+        except FileNotFoundError:
+            log(f"No save for '{self.windowTitle}', file path: '{savePath}'")
+        except json.JSONDecodeError as e:
+            log(f"Failed to decode JSON for file '{savePath}': '{e.msg}'")
+
         if isinstance(data, dict):
             self.saveData = FomodSave(data)
             self.updatedSaveData = FomodSave(data)
