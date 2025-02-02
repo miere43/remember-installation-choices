@@ -275,6 +275,7 @@ class FomodInstallerDialog():
         self.saveData: FomodSave | None = None
         self.updatedSaveData: FomodSave | None = None
         self.currentStep: FomodStep | None = None
+        self._nextButtonTextBeforeClick = ''
         # dumpChildrenWriteFile(self.widget)
         self.loadModName()
         self.loadSave()
@@ -337,12 +338,14 @@ class FomodInstallerDialog():
             button.clicked.connect(self.loadStepAndApplySaveState)
 
         if self.nextButton:
-            self.nextButton.clicked.connect(self.onNextButtonClicked)
+            self.nextButton.pressed.connect(self._onNextButtonPressed)
+            self.nextButton.clicked.connect(self._onNextButtonClicked)
 
-    def onNextButtonClicked(self) -> None:
-        # TODO: this wouldn't work for non-English UI. 
-        # log(f"onNextButtonClicked '{self.nextButton.text()}'")
-        if self.nextButton.text() == "Install":
+    def _onNextButtonPressed(self) -> None:
+        self._nextButtonTextBeforeClick = self.nextButton.text()
+
+    def _onNextButtonClicked(self) -> None:
+        if self._nextButtonTextBeforeClick == QApplication.translate("FomodInstallerDialog", "Install"):
             self.installClicked = True
             # log(f"onNextButtonClicked installClicked = True")
 
