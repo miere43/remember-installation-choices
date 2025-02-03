@@ -3,10 +3,15 @@ import re
 import sys
 import json
 import mobase
-from typing import Dict, Iterable, List, cast
-from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
-from PyQt6.QtCore import QObject, Qt
-from PyQt6.QtGui import QWindow, QGuiApplication
+from typing import Dict, Iterable, List, cast, Optional, Union
+try:
+    from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
+    from PyQt6.QtCore import QObject
+    from PyQt6.QtGui import QWindow, QGuiApplication
+except ImportError:
+    from PyQt5.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
+    from PyQt5.QtCore import QObject
+    from PyQt5.QtGui import QWindow, QGuiApplication
 
 currentFileFolder = os.path.dirname(os.path.realpath(__file__))
 
@@ -16,7 +21,7 @@ def log(s: str) -> None:
 class RememberModChoicesPlugin(mobase.IPlugin):
     def __init__(self):
         super().__init__()
-        self.currentDialog: FomodInstallerDialog | None = None
+        self.currentDialog: Optional[FomodInstallerDialog] = None
 
     def init(self, organizer: mobase.IOrganizer):
         self._organizer = organizer
@@ -64,7 +69,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
         if app and isinstance(app, QGuiApplication):
             app.focusWindowChanged.connect(self._focusWindowChanged)
 
-    def _focusWindowChanged(self, window: QWindow | None):
+    def _focusWindowChanged(self, window: Optional[QWindow]):
         # log(f"focusWindowChanged to: {window}")
         if window != None:
             self._findInstallerDialog()
@@ -108,7 +113,7 @@ def dumpChildren(obj: QObject, rootObj: QObject) -> List[Dict[str, object]]:
     return root
 
 class FomodChoiceSave():
-    def __init__(self, save: Dict[str, object] | None = None):
+    def __init__(self, save: Optional[Dict[str, object]] = None):
         self.text = ""
         self.isChecked = False
         
@@ -123,7 +128,7 @@ class FomodChoiceSave():
         }
 
 class FomodGroupSave():
-    def __init__(self, save: Dict[str, object] | None = None):
+    def __init__(self, save: Optional[Dict[str, object]] = None):
         self.title = ""
         self.choices: List[FomodChoiceSave] = []
         
@@ -132,7 +137,7 @@ class FomodGroupSave():
             for choice in cast(Iterable, save["choices"]):
                 self.choices.append(FomodChoiceSave(choice))
 
-    def choiceByText(self, text: str) -> FomodChoiceSave | None:
+    def choiceByText(self, text: str) -> Optional[FomodChoiceSave]:
         for choice in self.choices:
             if choice.text == text:
                 return choice
@@ -145,7 +150,7 @@ class FomodGroupSave():
         }
 
 class FomodStepSave():
-    def __init__(self, save: Dict[str, object] | None = None):
+    def __init__(self, save: Optional[Dict[str, object]] = None):
         self.title = ""
         self.groups: List[FomodGroupSave] = []
   
@@ -154,7 +159,7 @@ class FomodStepSave():
             for group in cast(Iterable, save["groups"]):
                 self.groups.append(FomodGroupSave(group))
 
-    def groupByTitle(self, title: str) -> FomodGroupSave | None:
+    def groupByTitle(self, title: str) -> Optional[FomodGroupSave]:
         for group in self.groups:
             if group.title == title:
                 return group
@@ -167,14 +172,14 @@ class FomodStepSave():
         }
 
 class FomodSave():
-    def __init__(self, save: Dict[str, object] | None = None):
+    def __init__(self, save: Optional[Dict[str, object]] = None):
         self.steps: List[FomodStepSave] = []
   
         if isinstance(save, dict):
             for group in cast(Iterable, save["steps"]):
                 self.steps.append(FomodStepSave(group))
 
-    def stepByTitle(self, title: str) -> FomodStepSave | None:
+    def stepByTitle(self, title: str) -> Optional[FomodStepSave]:
         for step in self.steps:
             if step.title == title:
                 return step
@@ -193,12 +198,12 @@ class FomodSave():
         }
 
 class FomodChoice():
-    def __init__(self, plugin: RememberModChoicesPlugin, widget: QRadioButton | QCheckBox):
+    def __init__(self, plugin: RememberModChoicesPlugin, widget: Union[QRadioButton, QCheckBox]):
         self.plugin = plugin
         self.widget = widget
         self.widget.toggled.connect(self._updateVisuals)
         self.originalToolTip = self.widget.toolTip()
-        self.save: FomodChoiceSave | None = None
+        self.save: Optional[FomodChoiceSave] = None
 
     def text(self) -> str:
         return self.widget.text()
@@ -270,11 +275,11 @@ class FomodInstallerDialog():
         self.destroyed = False
         self.installClicked = False
         self.modName = ''
-        self.prevButton = self.widget.findChild(QPushButton, "prevBtn", Qt.FindChildOption.FindChildrenRecursively)
-        self.nextButton = self.widget.findChild(QPushButton, "nextBtn", Qt.FindChildOption.FindChildrenRecursively)
-        self.saveData: FomodSave | None = None
-        self.updatedSaveData: FomodSave | None = None
-        self.currentStep: FomodStep | None = None
+        self.prevButton = self.widget.findChild(QPushButton, "prevBtn")
+        self.nextButton = self.widget.findChild(QPushButton, "nextBtn")
+        self.saveData: Optional[FomodSave] = None
+        self.updatedSaveData: Optional[FomodSave] = None
+        self.currentStep: Optional[FomodStep] = None
         self._nextButtonTextBeforeClick = ''
         # dumpChildrenWriteFile(self.widget)
         self.loadModName()
@@ -283,7 +288,7 @@ class FomodInstallerDialog():
         self.installButtonHandlers()
 
     def loadModName(self) -> None:
-        nameCombo = self.widget.findChild(QComboBox, "nameCombo", Qt.FindChildOption.FindChildrenRecursively)
+        nameCombo = self.widget.findChild(QComboBox, "nameCombo")
         if not nameCombo:
             self.modName = self.widget.windowTitle()
             log(f"Failed to find nameCombo, using window title as mod name: '{self.modName}'")
@@ -354,7 +359,7 @@ class FomodInstallerDialog():
             return
         
         savePath = self.makeSavePath()
-        data: object | None = None
+        data: Optional[object] = None
         try:
             with open(savePath, "r") as file:
                 data = json.load(file)
@@ -412,9 +417,9 @@ class FomodInstallerDialog():
 
         self.currentStep = FomodStep()
 
-        stepsStack = self.widget.findChild(QStackedWidget, "stepsStack", Qt.FindChildOption.FindChildrenRecursively)
+        stepsStack = self.widget.findChild(QStackedWidget, "stepsStack")
         
-        visibleStepWidget: QGroupBox | None = None
+        visibleStepWidget: Optional[QGroupBox] = None
         for stepWidget in stepsStack.children():
             if isinstance(stepWidget, QGroupBox) and stepWidget.isVisibleTo(self.widget):
                 visibleStepWidget = stepWidget
@@ -425,15 +430,15 @@ class FomodInstallerDialog():
             return
         
         self.currentStep.title = visibleStepWidget.title()
-        for groupBox in visibleStepWidget.findChildren(QGroupBox, None, Qt.FindChildOption.FindChildrenRecursively):
+        for groupBox in visibleStepWidget.findChildren(QGroupBox, None):
             group = FomodGroup(groupBox)
             self.currentStep.groups.append(group)
 
-            for choice in groupBox.findChildren(QCheckBox, "choice", Qt.FindChildOption.FindDirectChildrenOnly):
+            for choice in groupBox.findChildren(QCheckBox, "choice"):
                 group.choices.append(FomodChoice(self.plugin, choice))
-            for choice in groupBox.findChildren(QRadioButton, "choice", Qt.FindChildOption.FindDirectChildrenOnly):
+            for choice in groupBox.findChildren(QRadioButton, "choice"):
                 group.choices.append(FomodChoice(self.plugin, choice))
-            for choice in groupBox.findChildren(QRadioButton, "none", Qt.FindChildOption.FindDirectChildrenOnly):
+            for choice in groupBox.findChildren(QRadioButton, "none"):
                 group.choices.append(FomodChoice(self.plugin, choice))
     
         # dumpStep(self.currentStep)
