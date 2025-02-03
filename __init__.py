@@ -113,7 +113,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
         return "Saves choices you made during mod installation, and shows them next time you reinstall the mod."
 
     def version(self) -> mobase.VersionInfo:
-        return mobase.VersionInfo(1, 0, 0, 0)
+        return mobase.VersionInfo(1, 1, 0, 0)
 
     def isActive(self) -> bool:
         return bool(self._organizer.pluginSetting(self.name(), "enabled"))
