@@ -1,22 +1,97 @@
 import os
 import re
-import sys
+import shutil
 import json
 import mobase
 from typing import Dict, Iterable, List, cast, Optional, Union
 try:
     from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
-    from PyQt6.QtCore import QObject
+    from PyQt6.QtCore import QObject, qInfo, qDebug, qWarning, qCritical
     from PyQt6.QtGui import QWindow, QGuiApplication
 except ImportError:
     from PyQt5.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
-    from PyQt5.QtCore import QObject
+    from PyQt5.QtCore import QObject, qInfo, qDebug, qWarning, qCritical
     from PyQt5.QtGui import QWindow, QGuiApplication
 
 currentFileFolder = os.path.dirname(os.path.realpath(__file__))
 
-def log(s: str) -> None:
-    print("[Remember Installation Choices] " + s, file=sys.stderr)
+def logInfo(s: str) -> None:
+    qInfo(f"[Remember Installation Choices] {s}")
+
+def logDebug(s: str) -> None:
+    qDebug(f"[Remember Installation Choices] {s}")
+
+def logCritical(s: str) -> None:
+    qCritical(f"[Remember Installation Choices] {s}")
+
+def logWarning(s: str) -> None:
+    qWarning(f"[Remember Installation Choices] {s}")
+
+def escapeFileName(fileName: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
+
+def getSavesV1Folder(organizer: mobase.IOrganizer) -> str:
+    return os.path.join(
+        currentFileFolder,
+        "saves",
+        escapeFileName(organizer.managedGame().gameName()),
+    )
+
+def makeSavePathV1(organizer: mobase.IOrganizer, modName: str) -> str:
+    return os.path.join(
+        getSavesV1Folder(organizer),
+        escapeFileName(organizer.profileName()),
+        escapeFileName(modName) + ".json",
+    )
+
+def makeSavePathV2(organizer: mobase.IOrganizer, modName: str) -> str:
+    return os.path.join(getSavesV2Folder(organizer), escapeFileName(modName) + ".json")
+
+def getSavesV2Folder(organizer: mobase.IOrganizer) -> str:
+    return os.path.join(
+        currentFileFolder,
+        "saves_v2",
+        escapeFileName(organizer.managedGame().gameName()),
+    )
+
+def getFilePathsInFolder(folderPath: str, extension: str) -> List[str]:
+    filePaths: List[str] = []
+    for root, _, files in os.walk(folderPath):
+        for file in files:
+            if file.endswith(extension):
+                filePaths.append(os.path.join(root, file))
+    return filePaths
+
+def migrateSavesV1(organizer: mobase.IOrganizer) -> None:
+    oldSaveFolder = os.path.join(currentFileFolder, "saves")
+    oldPaths = getFilePathsInFolder(oldSaveFolder, ".json")
+    if len(oldPaths) == 0:
+        logDebug("migrateSavesV1: no old saves were found, skipping migration")
+        return
+    
+    logInfo(f"Detected {len(oldPaths)} old saves, will migrate to new version")
+    
+    backupDir = os.path.join(currentFileFolder, "saves_backup")
+    shutil.copytree(oldSaveFolder, backupDir, dirs_exist_ok=True)
+    logInfo(f"Created backup saves at '{backupDir}'")
+
+    os.makedirs(getSavesV2Folder(organizer), exist_ok=True)
+    for oldPath in oldPaths:
+        oldPathShort = os.path.relpath(oldPath, currentFileFolder)
+        oldModTime = os.path.getmtime(oldPath)
+
+        modName, _ = os.path.splitext(os.path.basename(oldPath))
+        newPath = makeSavePathV2(organizer, modName)
+        newPathShort = os.path.relpath(newPath, currentFileFolder)
+        newModTime = os.path.getmtime(newPath) if os.path.exists(newPath) else 0
+
+        if newModTime >= oldModTime:
+            os.remove(oldPath)
+            logDebug(f"Removed old save '{oldPathShort}' with modtime={oldModTime}, because there is newer save at '{newPathShort}' with modtime={newModTime}")
+        else:
+            shutil.move(oldPath, newPath)
+            logDebug(f"Moved old save '{oldPathShort}' with modtime={oldModTime} to path '{newPathShort}' (this file had modtime={newModTime}), because old save is newer or new save does not exist")
+    logInfo("Save migration complete")
 
 class RememberModChoicesPlugin(mobase.IPlugin):
     def __init__(self):
@@ -65,12 +140,16 @@ class RememberModChoicesPlugin(mobase.IPlugin):
         ]
     
     def _onUserInterfaceInitialized(self, mainWindow: QMainWindow):
+        try:
+            migrateSavesV1(self._organizer)
+        except Exception as e:
+            logCritical(f"Failed to migrate old saves: {e}")
+
         app = QApplication.instance()
         if app and isinstance(app, QGuiApplication):
             app.focusWindowChanged.connect(self._focusWindowChanged)
 
     def _focusWindowChanged(self, window: Optional[QWindow]):
-        # log(f"focusWindowChanged to: {window}")
         if window != None:
             self._findInstallerDialog()
 
@@ -81,7 +160,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
         for widget in QApplication.topLevelWidgets():
             if widget.objectName() == "FomodInstallerDialog":
                 self.currentDialog = FomodInstallerDialog(self, widget)
-                # log(f"Found install window {widget}")
+                logDebug(f"Found install window {widget}")
                 break
 
 # def dumpChildrenWriteFile(obj: QObject):
@@ -291,53 +370,37 @@ class FomodInstallerDialog():
         nameCombo = self.widget.findChild(QComboBox, "nameCombo")
         if not nameCombo:
             self.modName = self.widget.windowTitle()
-            log(f"Failed to find nameCombo, using window title as mod name: '{self.modName}'")
+            logCritical(f"Failed to find nameCombo, using window title as mod name: '{self.modName}'")
             return
         self.modName = nameCombo.currentText()
-
-    def escapeFileName(self, fileName: str) -> str:
-        return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
-
-    def makeSavePath(self) -> str:
-        path = os.path.join(
-            currentFileFolder,
-            "saves",
-            self.escapeFileName(self.plugin._organizer.managedGame().gameName()),
-            self.escapeFileName(self.plugin._organizer.profileName()),
-            self.escapeFileName(self.modName) + ".json",
-        )
-        # log(f"Using save path: {path}")
-        return path
 
     def onDestroyed(self) -> None:
         if self.plugin.currentDialog == self:
             self.plugin.currentDialog = None
 
-        # log("FomodInstallerDialog destroyed")
-
         if self.destroyed:
-            # log("FomodInstallerDialog: not saving, window destroy event already handled")
+            logDebug("FomodInstallerDialog: not saving, window destroy event already handled")
             return
         self.destroyed = True
 
         if not self.installClicked:
-            # log("FomodInstallerDialog: not saving, install button was not clicked")
+            logDebug("FomodInstallerDialog: not saving, install button was not clicked")
             return
 
         if not self.updatedSaveData:
-            # log("FomodInstallerDialog: not saving, save data is missing")
+            logDebug("FomodInstallerDialog: not saving, save data is missing")
             return
 
-        path = self.makeSavePath()
+        path = makeSavePathV2(self.plugin._organizer, self.modName)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as file:
             json.dump(self.updatedSaveData.toDict(), file, indent=4)
-        # log(f"FomodInstallerDialog: data saved into '{path}'")
+        logDebug(f"FomodInstallerDialog: data saved into '{path}'")
 
     def installButtonHandlers(self) -> None:
         for button in [self.prevButton, self.nextButton]:
             if not button:
-                log(f"Failed to find prev or next button in dialog")
+                logCritical(f"Failed to find prev or next button in dialog")
                 continue
             button.pressed.connect(self.updateSaveWithCurrentStep)
             button.clicked.connect(self.loadStepAndApplySaveState)
@@ -352,22 +415,21 @@ class FomodInstallerDialog():
     def _onNextButtonClicked(self) -> None:
         if self._nextButtonTextBeforeClick == QApplication.translate("FomodInstallerDialog", "Install"):
             self.installClicked = True
-            # log(f"onNextButtonClicked installClicked = True")
+            logDebug(f"onNextButtonClicked installClicked = True")
 
     def loadSave(self) -> None:
         if self.saveData:
             return
         
-        savePath = self.makeSavePath()
+        savePath = makeSavePathV2(self.plugin._organizer, self.modName)
         data: Optional[object] = None
         try:
             with open(savePath, "r") as file:
                 data = json.load(file)
         except FileNotFoundError:
-            pass
-            # log(f"No save for '{self.modName}', file path: '{savePath}'")
+            logDebug(f"No save for '{self.modName}', file path: '{savePath}'")
         except json.JSONDecodeError as e:
-            log(f"Failed to decode JSON for file '{savePath}': '{e.msg}'")
+            logCritical(f"Failed to decode JSON for file '{savePath}': '{e.msg}'")
 
         if isinstance(data, dict):
             self.saveData = FomodSave(data)
@@ -426,7 +488,7 @@ class FomodInstallerDialog():
                 break
 
         if not visibleStepWidget:
-            log(f"Failed to find visible step widget")
+            logCritical(f"Failed to find visible step widget")
             return
         
         self.currentStep.title = visibleStepWidget.title()
