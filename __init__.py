@@ -129,6 +129,12 @@ class RememberModChoicesPlugin(mobase.IPlugin):
 
     def disabledHintChoiceStyleSheet(self) -> str:
         return str(self._organizer.pluginSetting(self.name(), "hint_choice_disabled_style_sheet"))
+    
+    def dumpInstallerDialogWidgetTree(self) -> bool:
+        return bool(self._organizer.pluginSetting(self.name(), "xdebug_dump_installer_dialog_widget_tree"))
+
+    def dumpStep(self) -> bool:
+        return bool(self._organizer.pluginSetting(self.name(), "xdebug_dump_step"))
 
     def settings(self) -> List[mobase.PluginSetting]:
         return [
@@ -137,6 +143,8 @@ class RememberModChoicesPlugin(mobase.IPlugin):
             mobase.PluginSetting("previous_choice_disabled_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(0, 255, 0, 0.15)"),
             mobase.PluginSetting("hint_choice_style_sheet", "Style sheet to apply to clickable choices", "background-color: rgba(255, 255, 0, 0.25)"),
             mobase.PluginSetting("hint_choice_disabled_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(255, 255, 0, 0.15)"),
+            mobase.PluginSetting("xdebug_dump_installer_dialog_widget_tree", "", False),
+            mobase.PluginSetting("xdebug_dump_step", "", False),
         ]
     
     def _onUserInterfaceInitialized(self, mainWindow: QMainWindow):
@@ -163,9 +171,9 @@ class RememberModChoicesPlugin(mobase.IPlugin):
                 logDebug(f"Found install window {widget}")
                 break
 
-# def dumpChildrenWriteFile(obj: QObject):
-#     with open(os.path.join(currentFileFolder, "debug_dump_children.json"), "w") as file:
-#         json.dump(dumpChildren(obj, obj), file, indent=4)
+def dumpChildrenWriteFile(obj: QObject):
+    with open(os.path.join(currentFileFolder, "debug_dump_children.json"), "w") as file:
+        json.dump(dumpChildren(obj, obj), file, indent=4)
 
 def dumpChildren(obj: QObject, rootObj: QObject) -> List[Dict[str, object]]:
     root = []
@@ -178,14 +186,10 @@ def dumpChildren(obj: QObject, rootObj: QObject) -> List[Dict[str, object]]:
         if isinstance(child, QWidget) and isinstance(rootObj, QWidget):
             data["isVisible"] = child.isVisibleTo(rootObj)
 
-        if isinstance(child, QRadioButton):
+        if isinstance(child, (QRadioButton, QPushButton, QCheckBox)):
             data["text"] = child.text()
         elif isinstance(child, QGroupBox):
-            data["title"]= child.title()
-        elif isinstance(child, QPushButton):
-            data["text"] = child.text()
-        elif isinstance(child, QCheckBox):
-            data["text"] = child.text()
+            data["title"] = child.title()
         
         data["children"] = dumpChildren(child, rootObj)
         root.append(data)
@@ -230,13 +234,17 @@ class FomodGroupSave():
 
 class FomodStepSave():
     def __init__(self, save: Optional[Dict[str, object]] = None):
-        self.title = ""
+        self.title: str = ""
+        self.widgetIndex: int = -1
         self.groups: List[FomodGroupSave] = []
   
         if isinstance(save, dict):
             self.title = str(save["title"])
             for group in cast(Iterable, save["groups"]):
                 self.groups.append(FomodGroupSave(group))
+            widgetIndex = save.get("widgetIndex", -1)
+            if isinstance(widgetIndex, int):
+                self.widgetIndex = widgetIndex
 
     def groupByTitle(self, title: str) -> Optional[FomodGroupSave]:
         for group in self.groups:
@@ -247,6 +255,7 @@ class FomodStepSave():
     def toDict(self) -> Dict[str, object]:
         return {
             "title": self.title,
+            "widgetIndex": self.widgetIndex,
             "groups": list(map(lambda x: x.toDict(), self.groups)),
         }
 
@@ -258,15 +267,27 @@ class FomodSave():
             for group in cast(Iterable, save["steps"]):
                 self.steps.append(FomodStepSave(group))
 
-    def stepByTitle(self, title: str) -> Optional[FomodStepSave]:
+    def bestMatchingStepByTitleAndWidgetIndex(self, title: str, wantedWidgetIndex: int) -> Optional[FomodStepSave]:
+        matchingSteps: List[FomodStepSave] = [];
         for step in self.steps:
             if step.title == title:
+                matchingSteps.append(step)
+        
+        if len(matchingSteps) <= 1:
+            return matchingSteps[0] if matchingSteps else None
+        
+        logDebug(f"Found multiple steps with same title '{title}', will try to disambiguate them using wantedStepIndex={wantedWidgetIndex}")
+        for step in matchingSteps:
+            logDebug(f"- Got step with index={step.widgetIndex}")
+            if step.widgetIndex == wantedWidgetIndex:
                 return step
-        return None
+        
+        logCritical(f"There are multiple steps with same name '{title}', couldn't disambiguate between them, choices for this step probably will be incorrect")
+        return matchingSteps[0]
     
     def upsertStep(self, newStep: FomodStepSave) -> None:
         for index, step in enumerate(self.steps):
-            if step.title == newStep.title:
+            if step.title == newStep.title and (step.widgetIndex == newStep.widgetIndex or step.widgetIndex == -1):
                 self.steps[index] = newStep
                 return
         self.steps.append(newStep)
@@ -341,6 +362,7 @@ class FomodStep():
     def __init__(self):
         self.title = ""
         self.groups: List[FomodGroup] = []
+        self.widgetIndex = -1
 
     def _destroy(self) -> None:
         for group in self.groups:
@@ -360,7 +382,8 @@ class FomodInstallerDialog():
         self.updatedSaveData: Optional[FomodSave] = None
         self.currentStep: Optional[FomodStep] = None
         self._nextButtonTextBeforeClick = ''
-        # dumpChildrenWriteFile(self.widget)
+        if plugin.dumpInstallerDialogWidgetTree():
+            dumpChildrenWriteFile(self.widget)
         self.loadModName()
         self.loadSave()
         self.loadStepAndApplySaveState()
@@ -443,6 +466,7 @@ class FomodInstallerDialog():
 
         saveStep = FomodStepSave()
         saveStep.title = self.currentStep.title
+        saveStep.widgetIndex = self.currentStep.widgetIndex
         self.updatedSaveData.upsertStep(saveStep)
 
         for group in self.currentStep.groups:
@@ -460,7 +484,7 @@ class FomodInstallerDialog():
         if not self.currentStep or not self.saveData:
             return
 
-        saveStep = self.saveData.stepByTitle(self.currentStep.title)
+        saveStep = self.saveData.bestMatchingStepByTitleAndWidgetIndex(self.currentStep.title, self.currentStep.widgetIndex)
         if not saveStep:
             return
         
@@ -480,6 +504,13 @@ class FomodInstallerDialog():
         self.currentStep = FomodStep()
 
         stepsStack = self.widget.findChild(QStackedWidget, "stepsStack")
+        if not stepsStack:
+            logCritical(f"Failed to find 'stepsStack' widget")
+            return
+        
+        self.currentStep.widgetIndex = stepsStack.currentIndex()
+        if self.currentStep.widgetIndex == -1:
+            logCritical(f"'stepsStack' widget must have current index, but it was -1")
         
         visibleStepWidget: Optional[QGroupBox] = None
         for stepWidget in stepsStack.children():
@@ -503,14 +534,16 @@ class FomodInstallerDialog():
             for choice in groupBox.findChildren(QRadioButton, "none"):
                 group.choices.append(FomodChoice(self.plugin, choice))
     
-        # dumpStep(self.currentStep)
+        if self.plugin.dumpStep():
+            dumpStep(self.currentStep)
 
-# def dumpStep(step: FomodStep) -> None:
-#     log(f"Step title: '{step.title}'")
-#     for group in step.groups:
-#         log(f"Group: '{group.title()}'")
-#         for choice in group.choices:
-#             log(f"- Choice: '{choice.text()}, checked: {choice.isChecked()}'")
+def dumpStep(step: FomodStep) -> None:
+    logCritical(f"Step title: '{step.title}'")
+    logCritical(f"Step widget index: '{step.widgetIndex}'")
+    for group in step.groups:
+        logCritical(f"Group: '{group.title()}'")
+        for choice in group.choices:
+            logCritical(f"- Choice: '{choice.text()}, checked: {choice.isChecked()}'")
 
 def createPlugin() -> mobase.IPlugin:
     return RememberModChoicesPlugin()
