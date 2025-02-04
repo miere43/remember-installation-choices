@@ -54,6 +54,19 @@ def getSavesV2Folder(organizer: mobase.IOrganizer) -> str:
         escapeFileName(organizer.managedGame().gameName()),
     )
 
+def makeSavePathV3(organizer: mobase.IOrganizer, modName: str) -> str:
+    return os.path.join(getSavesV3Folder(organizer), escapeFileName(modName) + ".json")
+
+def getSavesV3Folder(organizer: mobase.IOrganizer) -> str:
+    return os.path.join(
+        os.path.join(
+            organizer.pluginDataPath(),
+            "RememberInstallationChoices",
+        ),
+        "saves_v3",
+        escapeFileName(organizer.managedGame().gameName()),
+    )
+
 def getFilePathsInFolder(folderPath: str, extension: str) -> List[str]:
     filePaths: List[str] = []
     for root, _, files in os.walk(folderPath):
@@ -81,7 +94,7 @@ def migrateSavesV1(organizer: mobase.IOrganizer) -> None:
         oldModTime = os.path.getmtime(oldPath)
 
         modName, _ = os.path.splitext(os.path.basename(oldPath))
-        newPath = makeSavePathV2(organizer, modName)
+        newPath = makeSavePathV3(organizer, modName)
         newPathShort = os.path.relpath(newPath, currentFileFolder)
         newModTime = os.path.getmtime(newPath) if os.path.exists(newPath) else 0
 
@@ -391,7 +404,7 @@ class FomodInstallerDialog():
             logDebug("FomodInstallerDialog: not saving, save data is missing")
             return
 
-        path = makeSavePathV2(self.plugin._organizer, self.modName)
+        path = makeSavePathV3(self.plugin._organizer, self.modName)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as file:
             json.dump(self.updatedSaveData.toDict(), file, indent=4)
@@ -421,7 +434,7 @@ class FomodInstallerDialog():
         if self.saveData:
             return
         
-        savePath = makeSavePathV2(self.plugin._organizer, self.modName)
+        savePath = makeSavePathV3(self.plugin._organizer, self.modName)
         data: Optional[object] = None
         try:
             with open(savePath, "r") as file:
