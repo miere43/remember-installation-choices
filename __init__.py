@@ -115,26 +115,32 @@ class RememberModChoicesPlugin(mobase.IPlugin):
     def version(self) -> mobase.VersionInfo:
         return mobase.VersionInfo(1, 1, 0, 0)
 
+    def _setting(self, key: str) -> object:
+        return self._organizer.pluginSetting(self.name(), key)
+
     def isActive(self) -> bool:
-        return bool(self._organizer.pluginSetting(self.name(), "enabled"))
+        return bool(self._setting("enabled"))
 
     def previousChoiceStyleSheet(self) -> str:
-        return str(self._organizer.pluginSetting(self.name(), "previous_choice_style_sheet"))
+        return str(self._setting("previous_choice_style_sheet"))
 
     def disabledPreviousChoiceStyleSheet(self) -> str:
-        return str(self._organizer.pluginSetting(self.name(), "previous_choice_disabled_style_sheet"))
+        return str(self._setting("previous_choice_disabled_style_sheet"))
 
     def hintChoiceStyleSheet(self) -> str:
-        return str(self._organizer.pluginSetting(self.name(), "hint_choice_style_sheet"))
+        return str(self._setting("hint_choice_style_sheet"))
 
     def disabledHintChoiceStyleSheet(self) -> str:
-        return str(self._organizer.pluginSetting(self.name(), "hint_choice_disabled_style_sheet"))
+        return str(self._setting("hint_choice_disabled_style_sheet"))
+
+    def autoSelectPreviousChoices(self) -> bool:
+        return bool(self._setting("auto_select_previous_choices"))
     
     def dumpInstallerDialogWidgetTree(self) -> bool:
-        return bool(self._organizer.pluginSetting(self.name(), "xdebug_dump_installer_dialog_widget_tree"))
+        return bool(self._setting("xdebug_dump_installer_dialog_widget_tree"))
 
     def dumpStep(self) -> bool:
-        return bool(self._organizer.pluginSetting(self.name(), "xdebug_dump_step"))
+        return bool(self._setting("xdebug_dump_step"))
 
     def settings(self) -> List[mobase.PluginSetting]:
         return [
@@ -143,6 +149,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
             mobase.PluginSetting("previous_choice_disabled_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(0, 255, 0, 0.15)"),
             mobase.PluginSetting("hint_choice_style_sheet", "Style sheet to apply to clickable choices", "background-color: rgba(255, 255, 0, 0.25)"),
             mobase.PluginSetting("hint_choice_disabled_style_sheet", "Style sheet to apply to unclickable choices", "background-color: rgba(255, 255, 0, 0.15)"),
+            mobase.PluginSetting("auto_select_previous_choices", "Automatically selects previous choices", False),
             mobase.PluginSetting("xdebug_dump_installer_dialog_widget_tree", "", False),
             mobase.PluginSetting("xdebug_dump_step", "", False),
         ]
@@ -311,6 +318,11 @@ class FomodChoice():
     def isChecked(self) -> bool:
         return self.widget.isChecked()
     
+    def setChecked(self, checked: bool) -> None:
+        if self.widget.isEnabled():
+            self.widget.setChecked(checked)
+            self._updateVisuals()
+
     def _makeToolTipText(self, text) -> str:
         return f"{text}\n\n{self.originalToolTip}".strip()
 
@@ -496,6 +508,8 @@ class FomodInstallerDialog():
             for choice in group.choices:
                 if saveChoice := saveGroup.choiceByText(choice.text()):
                     choice.setSave(saveChoice)
+                    if self.plugin.autoSelectPreviousChoices():
+                        choice.setChecked(saveChoice.isChecked)
 
     def loadStep(self) -> None:
         if self.currentStep:
