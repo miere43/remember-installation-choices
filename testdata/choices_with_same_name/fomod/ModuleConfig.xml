@@ -1,0 +1,49 @@
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+    <moduleName>Choices with same name</moduleName>
+
+     <installSteps order="Explicit">
+        <installStep name="Step 123">
+            <optionalFileGroups order="Explicit">
+                <group name="Select an option:" type="SelectAny">
+                    <plugins order="Explicit">
+                        <plugin name="Option A">
+                            <files>
+                                <file source="file_a.txt"/>
+                            </files>
+                            <typeDescriptor>
+                                <type name="Recommended"/>
+                            </typeDescriptor>
+                        </plugin>
+
+                        <plugin name="Option A">
+                            <files>
+                                <file source="file_b.txt"/>
+                            </files>
+                            <typeDescriptor>
+                                <type name="Optional"/>
+                            </typeDescriptor>
+                        </plugin>
+
+                        <plugin name="Option A">
+                            <files>
+                                <file source="file_c.txt"/>
+                            </files>
+                            <typeDescriptor>
+                                <type name="Optional"/>
+                            </typeDescriptor>
+                        </plugin>
+
+                        <plugin name="Option A">
+                            <files>
+                                <file source="file_d.txt"/>
+                            </files>
+                            <typeDescriptor>
+                                <type name="Optional"/>
+                            </typeDescriptor>
+                        </plugin>
+                    </plugins>
+                </group>
+            </optionalFileGroups>
+        </installStep>
+    </installSteps>
+</config>

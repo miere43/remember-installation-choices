@@ -115,7 +115,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
     def version(self) -> mobase.VersionInfo:
         # automatic version replacement, see 'scripts/make_build.py'
         # VERSION_BEGIN
-        return mobase.VersionInfo(1, 2, 0, 0)
+        return mobase.VersionInfo(1, 2, 1, 0)
         # VERSION_END
 
     def _setting(self, key: str) -> object:
@@ -205,7 +205,7 @@ def dumpChildren(obj: QObject, rootObj: QObject) -> List[Dict[str, object]]:
         root.append(data)
     return root
 
-T = TypeVar('T', "FomodGroupSave", "FomodStepSave")
+T = TypeVar('T', "FomodGroupSave", "FomodStepSave", "FomodChoiceSave")
 def findWidgetListObject(
     objects: List[T],
     objectName: str,
@@ -214,7 +214,7 @@ def findWidgetListObject(
 ) -> Optional[T]:
     matchingObjects: List[T] = []
     for object in objects:
-        if object.title == title:
+        if object.getText() == title:
             matchingObjects.append(object)
     
     if len(matchingObjects) <= 1:
@@ -232,15 +232,25 @@ def findWidgetListObject(
 class FomodChoiceSave():
     def __init__(self, save: Optional[Dict[str, object]] = None):
         self.text = ""
+        self.widgetIndex = -1
         self.isChecked = False
         
         if isinstance(save, dict):
             self.text = str(save["text"])
+            
+            widgetIndex = save.get("widgetIndex", -1)
+            if isinstance(widgetIndex, int):
+                self.widgetIndex = widgetIndex
+
             self.isChecked = bool(save["isChecked"])
+
+    def getText(self) -> str:
+        return self.text
 
     def toDict(self) -> Dict[str, object]:
         return {
             "text": self.text,
+            "widgetIndex": self.widgetIndex,
             "isChecked": self.isChecked,
         }
 
@@ -251,18 +261,18 @@ class FomodGroupSave():
         self.choices: List[FomodChoiceSave] = []
         
         if isinstance(save, dict):
-            self.title = save["title"]
+            self.title = str(save["title"])
             for choice in cast(Iterable, save["choices"]):
                 self.choices.append(FomodChoiceSave(choice))
             widgetIndex = save.get("widgetIndex", -1)
             if isinstance(widgetIndex, int):
                 self.widgetIndex = widgetIndex
 
-    def choiceByText(self, text: str) -> Optional[FomodChoiceSave]:
-        for choice in self.choices:
-            if choice.text == text:
-                return choice
-        return None
+    def getText(self) -> str:
+        return self.title
+
+    def findChoice(self, text: str, wantedWidgetIndex: int) -> Optional[FomodChoiceSave]:
+        return findWidgetListObject(self.choices, 'choice', text, wantedWidgetIndex)
 
     def toDict(self) -> Dict[str, object]:
         return {
@@ -284,6 +294,9 @@ class FomodStepSave():
             widgetIndex = save.get("widgetIndex", -1)
             if isinstance(widgetIndex, int):
                 self.widgetIndex = widgetIndex
+
+    def getText(self) -> str:
+        return self.title
 
     def findGroup(self, title: str, wantedWidgetIndex: int) -> Optional[FomodGroupSave]:
         return findWidgetListObject(self.groups, 'group', title, wantedWidgetIndex)
@@ -319,10 +332,11 @@ class FomodSave():
         }
 
 class FomodChoice():
-    def __init__(self, plugin: RememberModChoicesPlugin, widget: Union[QRadioButton, QCheckBox]):
+    def __init__(self, plugin: RememberModChoicesPlugin, widget: Union[QRadioButton, QCheckBox], widgetIndex: int):
         self.plugin = plugin
         self.widget = widget
         self.widget.toggled.connect(self._updateVisuals)
+        self.widgetIndex = widgetIndex
         self.originalToolTip = self.widget.toolTip()
         self.save: Optional[FomodChoiceSave] = None
 
@@ -373,10 +387,10 @@ class FomodChoice():
         self.widget.toggled.disconnect(self._updateVisuals)
 
 class FomodGroup():
-    def __init__(self, groupBox: QGroupBox):
+    def __init__(self, groupBox: QGroupBox, widgetIndex: int):
         self.groupBox = groupBox
         self.choices: List[FomodChoice] = []
-        self.widgetIndex = -1
+        self.widgetIndex = widgetIndex
 
     def title(self) -> str:
         return self.groupBox.title()
@@ -503,6 +517,7 @@ class FomodInstallerDialog():
             for choice in group.choices:
                 saveChoice = FomodChoiceSave()
                 saveChoice.text = choice.text()
+                saveChoice.widgetIndex = choice.widgetIndex
                 saveChoice.isChecked = choice.isChecked()
                 saveGroup.choices.append(saveChoice)
             saveStep.groups.append(saveGroup)
@@ -522,7 +537,7 @@ class FomodInstallerDialog():
                 continue
 
             for choice in group.choices:
-                if saveChoice := saveGroup.choiceByText(choice.text()):
+                if saveChoice := saveGroup.findChoice(choice.text(), choice.widgetIndex):
                     choice.setSave(saveChoice)
                     if self.plugin.autoSelectPreviousChoices():
                         choice.setChecked(saveChoice.isChecked)
@@ -554,28 +569,22 @@ class FomodInstallerDialog():
         
         self.currentStep.title = visibleStepWidget.title()
         for index, groupBox in enumerate(visibleStepWidget.findChildren(QGroupBox, None)):
-            group = FomodGroup(groupBox)
-            group.widgetIndex = index
+            group = FomodGroup(groupBox, index)
             self.currentStep.groups.append(group)
 
-            for choice in groupBox.findChildren(QCheckBox, "choice"):
-                group.choices.append(FomodChoice(self.plugin, choice))
-            for choice in groupBox.findChildren(QRadioButton, "choice"):
-                group.choices.append(FomodChoice(self.plugin, choice))
-            for choice in groupBox.findChildren(QRadioButton, "none"):
-                group.choices.append(FomodChoice(self.plugin, choice))
+            for index, choiceWidget in enumerate(groupBox.children()):
+                if isinstance(choiceWidget, (QCheckBox, QRadioButton)) and choiceWidget.objectName() in ("choice", "none"): 
+                    group.choices.append(FomodChoice(self.plugin, choiceWidget, index))
     
         if self.plugin.dumpStep():
             dumpStep(self.currentStep)
 
 def dumpStep(step: FomodStep) -> None:
-    logCritical(f"Step title: '{step.title}'")
-    logCritical(f"Step widget index: '{step.widgetIndex}'")
+    logCritical(f"Step title: '{step.title}', widget index: {step.widgetIndex}")
     for group in step.groups:
-        logCritical(f"Group: '{group.title()}'")
-        logCritical(f"Group widget index: '{group.widgetIndex}'")
+        logCritical(f"Group: '{group.title()}', widget index: {group.widgetIndex}")
         for choice in group.choices:
-            logCritical(f"- Choice: '{choice.text()}, checked: {choice.isChecked()}'")
+            logCritical(f"- Choice: '{choice.text()}, checked: {choice.isChecked()}, widget index: {choice.widgetIndex}'")
 
 def createPlugin() -> mobase.IPlugin:
     return RememberModChoicesPlugin()

@@ -1,0 +1,7 @@
+<fomod>
+    <Name>Choices with same name</Name>
+    <Author>Example Author</Author>
+    <Version MachineVersion="1.0.0">1.0.0</Version>
+    <Description>This is an example mod.</Description>
+    <Website>https://example.website.com/example-mod</Website>
+</fomod>
