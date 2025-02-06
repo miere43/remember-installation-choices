@@ -3,7 +3,7 @@ import re
 import shutil
 import json
 import mobase
-from typing import Dict, Iterable, List, cast, Optional, Union
+from typing import Dict, Iterable, List, TypeVar, cast, Optional, Union
 try:
     from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
     from PyQt6.QtCore import QObject, qInfo, qDebug, qWarning, qCritical
@@ -205,6 +205,30 @@ def dumpChildren(obj: QObject, rootObj: QObject) -> List[Dict[str, object]]:
         root.append(data)
     return root
 
+T = TypeVar('T', "FomodGroupSave", "FomodStepSave")
+def findWidgetListObject(
+    objects: List[T],
+    objectName: str,
+    title: str,
+    wantedWidgetIndex: int
+) -> Optional[T]:
+    matchingObjects: List[T] = []
+    for object in objects:
+        if object.title == title:
+            matchingObjects.append(object)
+    
+    if len(matchingObjects) <= 1:
+        return matchingObjects[0] if matchingObjects else None
+
+    logDebug(f"Found multiple {objectName}s with same title '{title}', will try to disambiguate them using wantedWidgetIndex={wantedWidgetIndex}")
+    for object in matchingObjects:
+        logDebug(f"- Got group with index={object.widgetIndex}")
+        if object.widgetIndex == wantedWidgetIndex:
+            return object
+
+    logCritical(f"There are multiple {objectName}s with same name '{title}', couldn't disambiguate between them, choices for this {objectName} probably will be incorrect")
+    return matchingObjects[0]
+
 class FomodChoiceSave():
     def __init__(self, save: Optional[Dict[str, object]] = None):
         self.text = ""
@@ -223,12 +247,16 @@ class FomodChoiceSave():
 class FomodGroupSave():
     def __init__(self, save: Optional[Dict[str, object]] = None):
         self.title = ""
+        self.widgetIndex: int = -1
         self.choices: List[FomodChoiceSave] = []
         
         if isinstance(save, dict):
             self.title = save["title"]
             for choice in cast(Iterable, save["choices"]):
                 self.choices.append(FomodChoiceSave(choice))
+            widgetIndex = save.get("widgetIndex", -1)
+            if isinstance(widgetIndex, int):
+                self.widgetIndex = widgetIndex
 
     def choiceByText(self, text: str) -> Optional[FomodChoiceSave]:
         for choice in self.choices:
@@ -239,6 +267,7 @@ class FomodGroupSave():
     def toDict(self) -> Dict[str, object]:
         return {
             "title": self.title,
+            "widgetIndex": self.widgetIndex,
             "choices": list(map(lambda x: x.toDict(), self.choices)),
         }
 
@@ -256,11 +285,8 @@ class FomodStepSave():
             if isinstance(widgetIndex, int):
                 self.widgetIndex = widgetIndex
 
-    def groupByTitle(self, title: str) -> Optional[FomodGroupSave]:
-        for group in self.groups:
-            if group.title == title:
-                return group
-        return None
+    def findGroup(self, title: str, wantedWidgetIndex: int) -> Optional[FomodGroupSave]:
+        return findWidgetListObject(self.groups, 'group', title, wantedWidgetIndex)
 
     def toDict(self) -> Dict[str, object]:
         return {
@@ -277,23 +303,8 @@ class FomodSave():
             for group in cast(Iterable, save["steps"]):
                 self.steps.append(FomodStepSave(group))
 
-    def bestMatchingStepByTitleAndWidgetIndex(self, title: str, wantedWidgetIndex: int) -> Optional[FomodStepSave]:
-        matchingSteps: List[FomodStepSave] = [];
-        for step in self.steps:
-            if step.title == title:
-                matchingSteps.append(step)
-        
-        if len(matchingSteps) <= 1:
-            return matchingSteps[0] if matchingSteps else None
-        
-        logDebug(f"Found multiple steps with same title '{title}', will try to disambiguate them using wantedStepIndex={wantedWidgetIndex}")
-        for step in matchingSteps:
-            logDebug(f"- Got step with index={step.widgetIndex}")
-            if step.widgetIndex == wantedWidgetIndex:
-                return step
-        
-        logCritical(f"There are multiple steps with same name '{title}', couldn't disambiguate between them, choices for this step probably will be incorrect")
-        return matchingSteps[0]
+    def findStep(self, title: str, wantedWidgetIndex: int) -> Optional[FomodStepSave]:
+        return findWidgetListObject(self.steps, 'step', title, wantedWidgetIndex)
     
     def upsertStep(self, newStep: FomodStepSave) -> None:
         for index, step in enumerate(self.steps):
@@ -365,6 +376,7 @@ class FomodGroup():
     def __init__(self, groupBox: QGroupBox):
         self.groupBox = groupBox
         self.choices: List[FomodChoice] = []
+        self.widgetIndex = -1
 
     def title(self) -> str:
         return self.groupBox.title()
@@ -487,6 +499,7 @@ class FomodInstallerDialog():
         for group in self.currentStep.groups:
             saveGroup = FomodGroupSave()
             saveGroup.title = group.title()
+            saveGroup.widgetIndex = group.widgetIndex
             for choice in group.choices:
                 saveChoice = FomodChoiceSave()
                 saveChoice.text = choice.text()
@@ -499,12 +512,12 @@ class FomodInstallerDialog():
         if not self.currentStep or not self.saveData:
             return
 
-        saveStep = self.saveData.bestMatchingStepByTitleAndWidgetIndex(self.currentStep.title, self.currentStep.widgetIndex)
+        saveStep = self.saveData.findStep(self.currentStep.title, self.currentStep.widgetIndex)
         if not saveStep:
             return
         
         for group in self.currentStep.groups:
-            saveGroup = saveStep.groupByTitle(group.title())
+            saveGroup = saveStep.findGroup(group.title(), group.widgetIndex)
             if saveGroup == None:
                 continue
 
@@ -540,8 +553,9 @@ class FomodInstallerDialog():
             return
         
         self.currentStep.title = visibleStepWidget.title()
-        for groupBox in visibleStepWidget.findChildren(QGroupBox, None):
+        for index, groupBox in enumerate(visibleStepWidget.findChildren(QGroupBox, None)):
             group = FomodGroup(groupBox)
+            group.widgetIndex = index
             self.currentStep.groups.append(group)
 
             for choice in groupBox.findChildren(QCheckBox, "choice"):
@@ -559,6 +573,7 @@ def dumpStep(step: FomodStep) -> None:
     logCritical(f"Step widget index: '{step.widgetIndex}'")
     for group in step.groups:
         logCritical(f"Group: '{group.title()}'")
+        logCritical(f"Group widget index: '{group.widgetIndex}'")
         for choice in group.choices:
             logCritical(f"- Choice: '{choice.text()}, checked: {choice.isChecked()}'")
 
