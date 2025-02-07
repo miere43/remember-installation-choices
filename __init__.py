@@ -75,36 +75,41 @@ def getFilePathsInFolder(folderPath: str, extension: str) -> List[str]:
                 filePaths.append(os.path.join(root, file))
     return filePaths
 
-def migrateSavesV1(organizer: mobase.IOrganizer) -> None:
-    oldSaveFolder = os.path.join(currentFileFolder, "saves")
-    oldPaths = getFilePathsInFolder(oldSaveFolder, ".json")
-    if len(oldPaths) == 0:
-        logDebug("migrateSavesV1: no old saves were found, skipping migration")
-        return
-    
-    logInfo(f"Detected {len(oldPaths)} old saves, will migrate to new version")
-    
-    backupDir = os.path.join(currentFileFolder, "saves_backup")
-    shutil.copytree(oldSaveFolder, backupDir, dirs_exist_ok=True)
-    logInfo(f"Created backup saves at '{backupDir}'")
+def migrateSaves(organizer: mobase.IOrganizer) -> None:
+    for oldSaveFolder, version in zip(
+        [os.path.join(currentFileFolder, "saves"), getSavesV2Folder(organizer)],
+        ["V1", "V2"],
+    ):
+        logInfo(f"{oldSaveFolder}, {version}")
+        oldPaths = getFilePathsInFolder(oldSaveFolder, ".json")
+        if len(oldPaths) == 0:
+            logDebug(f"migrateSaves: no old {version} saves were found, skipping migration")
+            continue
 
-    os.makedirs(getSavesV2Folder(organizer), exist_ok=True)
-    for oldPath in oldPaths:
-        oldPathShort = os.path.relpath(oldPath, currentFileFolder)
-        oldModTime = os.path.getmtime(oldPath)
+        logInfo(f"Detected {len(oldPaths)} old {version} saves, will migrate to new version")
 
-        modName, _ = os.path.splitext(os.path.basename(oldPath))
-        newPath = makeSavePathV3(organizer, modName)
-        newPathShort = os.path.relpath(newPath, currentFileFolder)
-        newModTime = os.path.getmtime(newPath) if os.path.exists(newPath) else 0
+        backupDir = oldSaveFolder + "_backup"
+        shutil.copytree(oldSaveFolder, backupDir, dirs_exist_ok=True)
+        logInfo(f"Created backup saves at '{backupDir}'")
 
-        if newModTime >= oldModTime:
-            os.remove(oldPath)
-            logDebug(f"Removed old save '{oldPathShort}' with modtime={oldModTime}, because there is newer save at '{newPathShort}' with modtime={newModTime}")
-        else:
-            shutil.move(oldPath, newPath)
-            logDebug(f"Moved old save '{oldPathShort}' with modtime={oldModTime} to path '{newPathShort}' (this file had modtime={newModTime}), because old save is newer or new save does not exist")
-    logInfo("Save migration complete")
+        os.makedirs(getSavesV3Folder(organizer), exist_ok=True)
+        for oldPath in oldPaths:
+            oldPathShort = os.path.relpath(oldPath, currentFileFolder)
+            oldModTime = os.path.getmtime(oldPath)
+
+            modName, _ = os.path.splitext(os.path.basename(oldPath))
+            newPath = makeSavePathV3(organizer, modName)
+            newPathShort = os.path.relpath(newPath, currentFileFolder)
+            newModTime = os.path.getmtime(newPath) if os.path.exists(newPath) else 0
+
+            if newModTime >= oldModTime:
+                os.remove(oldPath)
+                logDebug(f"Removed old save '{oldPathShort}' with modtime={oldModTime}, because there is newer save at '{newPathShort}' with modtime={newModTime}")
+            else:
+                shutil.move(oldPath, newPath)
+                logDebug(f"Moved old save '{oldPathShort}' with modtime={oldModTime} to path '{newPathShort}' (this file had modtime={newModTime}), because old save is newer or new save does not exist")
+        logInfo("Save migration complete")
+
 
 class RememberModChoicesPlugin(mobase.IPlugin):
     def __init__(self):
@@ -154,7 +159,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
     
     def _onUserInterfaceInitialized(self, mainWindow: QMainWindow):
         try:
-            migrateSavesV1(self._organizer)
+            migrateSaves(self._organizer)
         except Exception as e:
             logCritical(f"Failed to migrate old saves: {e}")
 
