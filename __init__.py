@@ -1,16 +1,19 @@
+from ctypes.wintypes import BOOL, DWORD, HANDLE, LPCWSTR, LPVOID
 import os
 import re
 import shutil
 import json
 import mobase
-from typing import Dict, Iterable, List, TypeVar, cast, Optional, Union
+import ctypes
+import threading
+from typing import Callable, Dict, Iterable, List, TypeVar, cast, Optional, Union
 try:
     from PyQt6.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
-    from PyQt6.QtCore import QObject, qInfo, qDebug, qWarning, qCritical
+    from PyQt6.QtCore import QObject, qInfo, qDebug, qWarning, qCritical, pyqtSignal
     from PyQt6.QtGui import QWindow, QGuiApplication
 except ImportError:
     from PyQt5.QtWidgets import QMainWindow, QGroupBox, QStackedWidget, QWidget, QApplication, QRadioButton, QPushButton, QCheckBox, QComboBox
-    from PyQt5.QtCore import QObject, qInfo, qDebug, qWarning, qCritical
+    from PyQt5.QtCore import QObject, qInfo, qDebug, qWarning, qCritical, pyqtSignal
     from PyQt5.QtGui import QWindow, QGuiApplication
 
 currentFileFolder = os.path.dirname(os.path.realpath(__file__))
@@ -108,6 +111,133 @@ def migrateSaves(organizer: mobase.IOrganizer) -> None:
                 logDebug(f"Moved old save '{oldPathShort}' with modtime={oldModTime} to path '{newPathShort}' (this file had modtime={newModTime}), because old save is newer or new save does not exist")
         logInfo("Save migration complete")
 
+class DirectoryChangedNotify(QObject): # type: ignore
+    directoryChanged = pyqtSignal(str, str)
+
+def watchDirectoryThread(path: str, notify: DirectoryChangedNotify) -> None:
+    OPEN_EXISTING = 3
+    FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+    FILE_LIST_DIRECTORY = 1
+    FILE_SHARE_READ = 0x01
+    FILE_SHARE_WRITE = 0x02
+    FILE_SHARE_DELETE = 0x04
+    INVALID_HANDLE_VALUE = HANDLE(-1).value
+    FILE_NOTIFY_CHANGE_DIR_NAME = 0x02
+    FILE_ACTION_RENAMED_OLD_NAME = 0x00000004
+    FILE_ACTION_RENAMED_NEW_NAME = 0x00000005
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    CreateFileW = kernel32.CreateFileW
+    CreateFileW.restype = HANDLE
+    CreateFileW.argtypes = (
+        LPCWSTR, # lpFileName
+        DWORD, # dwDesiredAccess
+        DWORD, # dwShareMode
+        LPVOID, # lpSecurityAttributes
+        DWORD, # dwCreationDisposition
+        DWORD, # dwFlagsAndAttributes
+        HANDLE, # hTemplateFile
+    )
+
+    ReadDirectoryChangesW = kernel32.ReadDirectoryChangesW
+    ReadDirectoryChangesW.restype = BOOL
+    ReadDirectoryChangesW.argtypes = (
+        HANDLE, # hDirectory
+        LPVOID, # lpBuffer
+        DWORD, # nBufferLength
+        BOOL, # bWatchSubtree
+        DWORD, # dwNotifyFilter
+        ctypes.POINTER(DWORD),  # lpBytesReturned
+        ctypes.POINTER(None),  # lpOverlapped
+        LPVOID, # lpCompletionRoutine
+    )
+
+    GetLastError = kernel32.GetLastError 
+    GetLastError.restype = DWORD
+
+    CloseHandle = kernel32.CloseHandle
+    CloseHandle.restype = BOOL
+    CloseHandle.argtypes = (HANDLE,) # hObject
+
+    class FileNotifyInformation(ctypes.Structure):
+        _fields_ = (
+            ("NextEntryOffset", DWORD),
+            ("Action", DWORD),
+            ("FileNameLength", DWORD),
+            ("FileName", (ctypes.c_char * 1)),
+        )
+    FileNotifyInformationPtr = ctypes.POINTER(FileNotifyInformation)
+
+    handle = CreateFileW(
+        path,
+        FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        None,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        None,
+    )
+    if handle == INVALID_HANDLE_VALUE:
+        logCritical(f"Failed to open '{path}'")
+        return
+    
+    try:
+        watchBuffer = ctypes.create_string_buffer(64000)
+        readSize = DWORD()
+        numAllowedFailures = 10
+
+        while True:
+            readSize.value = 0
+            result = ReadDirectoryChangesW(
+                handle,
+                ctypes.byref(watchBuffer),
+                len(watchBuffer),
+                False,
+                FILE_NOTIFY_CHANGE_DIR_NAME,
+                ctypes.byref(readSize),
+                None,
+                None,
+            )
+            if result == 0:
+                logCritical(f"ReadDirectoryChangesW failed, error was '{GetLastError()}'")
+                numAllowedFailures -= 1
+                if numAllowedFailures > 0:
+                    continue
+                else:
+                    return
+
+            remainingBuffer = watchBuffer.raw
+            remainingBytes = readSize.value
+
+            oldName = ""
+            newName = ""
+            while remainingBytes > 0:
+                fni = ctypes.cast(remainingBuffer, FileNotifyInformationPtr)[0]  # type: ignore[arg-type]
+                ptr = ctypes.addressof(fni) + FileNotifyInformation.FileName.offset
+                filename = ctypes.string_at(ptr, fni.FileNameLength)
+                filenameUtf8 = filename.decode("utf-16")
+                if fni.Action == FILE_ACTION_RENAMED_OLD_NAME:
+                    oldName = filenameUtf8
+                elif fni.Action == FILE_ACTION_RENAMED_NEW_NAME:
+                    newName = filenameUtf8
+                    notify.directoryChanged.emit(oldName, newName)
+                    oldName = ""
+                    newName = ""
+                numBytesToSkip = fni.NextEntryOffset
+                if numBytesToSkip <= 0:
+                    break
+                remainingBuffer = remainingBuffer[numBytesToSkip:]
+                remainingBytes -= numBytesToSkip
+    finally:
+        CloseHandle(handle)
+
+def watchDirectory(path: str, callback: Callable[[str, str], None]) -> None:
+    # Use Qt signals to dispatch messages to UI thread
+    notifier = DirectoryChangedNotify()
+    notifier.directoryChanged.connect(callback)
+
+    thread = threading.Thread(target=watchDirectoryThread, args=[path, notifier])
+    thread.start()
 
 class RememberModChoicesPlugin(mobase.IPlugin):
     def __init__(self):
@@ -116,7 +246,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
 
     def init(self, organizer: mobase.IOrganizer):
         self._organizer = organizer
-        organizer.onUserInterfaceInitialized(lambda a: self._onUserInterfaceInitialized(a))
+        organizer.onUserInterfaceInitialized(self._onUserInterfaceInitialized)
         return True
 
     def name(self) -> str:
@@ -183,6 +313,8 @@ class RememberModChoicesPlugin(mobase.IPlugin):
         if app and isinstance(app, QGuiApplication):
             app.focusWindowChanged.connect(self._focusWindowChanged)
 
+        watchDirectory(self._organizer.modsPath(), self._modNameChanged)
+
     def _focusWindowChanged(self, window: Optional[QWindow]):
         if window != None:
             self._findInstallerDialog()
@@ -196,6 +328,19 @@ class RememberModChoicesPlugin(mobase.IPlugin):
                 self.currentDialog = FomodInstallerDialog(self, widget)
                 logDebug(f"Found install window {widget}")
                 break
+
+    def _modNameChanged(self, oldName: str, newName: str) -> None:
+        logDebug(f"Mod name changed: old name '{oldName}', new name '{newName}'")
+        oldSavePath = makeSavePathV3(self._organizer, oldName)
+        newSavePath = makeSavePathV3(self._organizer, newName)
+        if oldSavePath == newSavePath or not os.path.exists(oldSavePath):
+            return
+        try:
+            os.remove(newSavePath)
+        except FileNotFoundError:
+            pass
+        os.rename(oldSavePath, newSavePath)
+        logDebug(f"Renamed save file '{oldSavePath}' to '{newSavePath}'")
 
 def dumpChildrenWriteFile(obj: QObject):
     with open(os.path.join(currentFileFolder, "debug_dump_children.json"), "w") as file:
