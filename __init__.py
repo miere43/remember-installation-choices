@@ -59,10 +59,8 @@ def makeSavePathV3(organizer: mobase.IOrganizer, modName: str) -> str:
 
 def getSavesV3Folder(organizer: mobase.IOrganizer) -> str:
     return os.path.join(
-        os.path.join(
-            organizer.pluginDataPath(),
-            "RememberInstallationChoices",
-        ),
+        organizer.pluginDataPath(),
+        "remember_installation_choices",
         "saves_v3",
         escapeFileName(organizer.managedGame().gameName()),
     )
@@ -80,7 +78,7 @@ def migrateSaves(organizer: mobase.IOrganizer) -> None:
         [os.path.join(currentFileFolder, "saves"), getSavesV2Folder(organizer)],
         ["V1", "V2"],
     ):
-        logInfo(f"{oldSaveFolder}, {version}")
+        logDebug(f"migrateSaves: {oldSaveFolder}, {version}")
         oldPaths = getFilePathsInFolder(oldSaveFolder, ".json")
         if len(oldPaths) == 0:
             logDebug(f"migrateSaves: no old {version} saves were found, skipping migration")
