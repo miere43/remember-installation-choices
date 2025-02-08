@@ -261,7 +261,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
     def version(self) -> mobase.VersionInfo:
         # automatic version replacement, see 'scripts/make_build.py'
         # VERSION_BEGIN
-        return mobase.VersionInfo(1, 2, 1, 0)
+        return mobase.VersionInfo(1, 2, 2, 0)
         # VERSION_END
 
     def _setting(self, key: str) -> object:
