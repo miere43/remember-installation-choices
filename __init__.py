@@ -19,16 +19,28 @@ except ImportError:
 currentFileFolder = os.path.dirname(os.path.realpath(__file__))
 
 def logInfo(s: str) -> None:
-    qInfo(f"[Remember Installation Choices] {s}")
+    try:
+        qInfo(f"[Remember Installation Choices] {s.encode('utf-8')}")
+    except:
+        pass
 
 def logDebug(s: str) -> None:
-    qDebug(f"[Remember Installation Choices] {s}")
+    try:
+        qDebug(f"[Remember Installation Choices] {s.encode('utf-8')}")
+    except:
+        pass
 
 def logCritical(s: str) -> None:
-    qCritical(f"[Remember Installation Choices] {s}")
+    try:
+        qCritical(f"[Remember Installation Choices] {s.encode('utf-8')}")
+    except:
+        pass
 
 def logWarning(s: str) -> None:
-    qWarning(f"[Remember Installation Choices] {s}")
+    try:
+        qWarning(f"[Remember Installation Choices] {s.encode('utf-8')}")
+    except:
+        pass
 
 def escapeFileName(fileName: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
