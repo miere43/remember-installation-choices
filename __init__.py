@@ -242,7 +242,9 @@ def watchDirectory(path: str, callback: Callable[[str, str], None]) -> None:
 class RememberModChoicesPlugin(mobase.IPlugin):
     def __init__(self):
         super().__init__()
-        self.currentDialog: Optional[FomodInstallerDialog] = None
+        self.currentInstallerDialog: Optional[FomodInstallerDialog] = None
+        self.currentOverwriteDialog: Optional[QueryOverwriteDialog] = None
+        self.pendingSave: Optional[FomodSave] = None
 
     def init(self, organizer: mobase.IOrganizer):
         self._organizer = organizer
@@ -313,20 +315,42 @@ class RememberModChoicesPlugin(mobase.IPlugin):
         if app and isinstance(app, QGuiApplication):
             app.focusWindowChanged.connect(self._focusWindowChanged)
 
+        self._organizer.modList().onModInstalled(self._onModInstalled)
         watchDirectory(self._organizer.modsPath(), self._modNameChanged)
+
+    def _onModInstalled(self, mod: mobase.IModInterface) -> None:
+        if self.pendingSave:
+            path = makeSavePathV3(self._organizer, mod.name())
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as file:
+                json.dump(self.pendingSave.toDict(), file, indent=4)
+            logDebug(f"onModInstalled: pending save data was saved into '{path}'")
+            self.pendingSave = None
 
     def _focusWindowChanged(self, window: Optional[QWindow]):
         if window != None:
-            self._findInstallerDialog()
+            topLevelWidgets = cast(List[QWidget], QApplication.topLevelWidgets())
+            self._findInstallerDialog(topLevelWidgets)
+            self._findOverwriteDialog(topLevelWidgets)
 
-    def _findInstallerDialog(self):
-        if self.currentDialog:
+    def _findInstallerDialog(self, topLevelWidgets: List[QWidget]):
+        if self.currentInstallerDialog:
             return
 
-        for widget in QApplication.topLevelWidgets():
+        for widget in topLevelWidgets:
             if widget.objectName() == "FomodInstallerDialog":
-                self.currentDialog = FomodInstallerDialog(self, widget)
+                self.currentInstallerDialog = FomodInstallerDialog(self, widget)
                 logDebug(f"Found install window {widget}")
+                break
+   
+    def _findOverwriteDialog(self, topLevelWidgets: List[QWidget]):
+        if self.currentOverwriteDialog:
+            return
+
+        for widget in topLevelWidgets:
+            if widget.objectName() == "QueryOverwriteDialog":
+                self.currentOverwriteDialog = QueryOverwriteDialog(self, widget)
+                logDebug(f"Found query overwrite window {widget}")
                 break
 
     def _modNameChanged(self, oldName: str, newName: str) -> None:
@@ -570,6 +594,26 @@ class FomodStep():
         for group in self.groups:
             group._destroy()
 
+class QueryOverwriteDialog():
+    def __init__(self, plugin: RememberModChoicesPlugin, widget: QWidget):
+        self._plugin = plugin
+        self._widget = widget
+        self._widget.destroyed.connect(self._onDestroyed)
+        self._cancelButton = self._widget.findChild(QPushButton, "cancelBtn")
+        if self._cancelButton:
+            self._cancelButton.clicked.connect(self._onCancelButtonClicked)
+        else:
+            logCritical("Failed to find cancel button in QueryOverwriteDialog.")
+        dumpChildrenWriteFile(widget)
+
+    def _onDestroyed(self) -> None:
+        if self._plugin.currentOverwriteDialog == self:
+            self._plugin.currentOverwriteDialog = None
+
+    def _onCancelButtonClicked(self) -> None:
+        logDebug(f"Cancel button pressed in overwrite dialog, clearing pending save '{self._plugin.pendingSave}'")
+        self._plugin.pendingSave = None
+
 class FomodInstallerDialog():
     def __init__(self, plugin: RememberModChoicesPlugin, widget: QWidget):
         self.plugin = plugin
@@ -590,6 +634,7 @@ class FomodInstallerDialog():
         self.loadSave()
         self.loadStepAndApplySaveState()
         self.installButtonHandlers()
+        self.plugin.pendingSave = None
 
     def loadModName(self) -> None:
         self._nameCombo = self.widget.findChild(QComboBox, "nameCombo")
@@ -601,8 +646,8 @@ class FomodInstallerDialog():
         self.modName = self._nameCombo.currentText()
 
     def _onDestroyed(self) -> None:
-        if self.plugin.currentDialog == self:
-            self.plugin.currentDialog = None
+        if self.plugin.currentInstallerDialog == self:
+            self.plugin.currentInstallerDialog = None
 
         if self.destroyed:
             logDebug("FomodInstallerDialog: not saving, window destroy event already handled")
@@ -621,11 +666,7 @@ class FomodInstallerDialog():
             self._nameCombo.currentTextChanged.disconnect(self._onModNameChangedSlot)
             self._onModNameChangedSlot = None
 
-        path = makeSavePathV3(self.plugin._organizer, self.modName)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as file:
-            json.dump(self.updatedSaveData.toDict(), file, indent=4)
-        logDebug(f"FomodInstallerDialog: data saved into '{path}'")
+        self.plugin.pendingSave = self.updatedSaveData
 
     def _onModNameChanged(self, modName: str) -> None:
         self.modName = modName
