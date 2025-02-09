@@ -658,7 +658,7 @@ class FomodInstallerDialog():
 
         if isinstance(data, dict):
             self.saveData = FomodSave(data)
-            self.updatedSaveData = FomodSave(data)
+            self.updatedSaveData = FomodSave()
 
     def updateSaveWithCurrentStep(self) -> None:
         if not self.updatedSaveData:
