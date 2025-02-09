@@ -57,42 +57,37 @@ def logWarning(s: str) -> None:
 def escapeFileName(fileName: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
 
-def pathStr(s: str) -> str:
-    if not s.startswith("\\\\?\\"):
-        s = "\\\\?\\" + s
-    return os.path.normpath(s)
-    
 def makeSavePathV2(organizer: mobase.IOrganizer, modName: str) -> str:
-    return pathStr(os.path.join(getSavesV2Folder(organizer), escapeFileName(modName) + ".json"))
+    return os.path.join(getSavesV2Folder(organizer), escapeFileName(modName) + ".json")
 
 def getSavesV2Folder(organizer: mobase.IOrganizer) -> str:
-    return pathStr(os.path.join(
+    return os.path.join(
         currentFileFolder,
         "saves_v2",
         escapeFileName(organizer.managedGame().gameName()),
-    ))
+    )
 
 def makeSavePathV3(organizer: mobase.IOrganizer, modName: str) -> str:
-    return pathStr(os.path.join(getSavesV3Folder(organizer), escapeFileName(modName) + ".json"))
+    return os.path.join(getSavesV3Folder(organizer), escapeFileName(modName) + ".json")
 
 def getSavesV3Folder(organizer: mobase.IOrganizer) -> str:
-    return pathStr(os.path.join(
+    return os.path.join(
         organizer.pluginDataPath(),
         "remember_installation_choices",
         "saves_v3",
         escapeFileName(organizer.managedGame().gameName()),
-    ))
+    )
 
 def makeSavePathV4(organizer: mobase.IOrganizer, modName: str) -> str:
-    return pathStr(os.path.join(getSavesV4Folder(organizer), modName + ".json"))
+    return os.path.join(getSavesV4Folder(organizer), modName + ".json")
 
 def getSavesV4Folder(organizer: mobase.IOrganizer) -> str:
-    return pathStr(os.path.join(
+    return os.path.join(
         organizer.pluginDataPath(),
         "remember_installation_choices",
         "saves_v4",
         escapeFileName(organizer.managedGame().gameName()),
-    ))
+    )
 
 def getFilePathsInFolder(folderPath: str, extension: str) -> List[str]:
     filePaths: List[str] = []
