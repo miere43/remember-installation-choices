@@ -604,7 +604,6 @@ class QueryOverwriteDialog():
             self._cancelButton.clicked.connect(self._onCancelButtonClicked)
         else:
             logCritical("Failed to find cancel button in QueryOverwriteDialog.")
-        dumpChildrenWriteFile(widget)
 
     def _onDestroyed(self) -> None:
         if self._plugin.currentOverwriteDialog == self:
