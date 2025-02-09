@@ -33,20 +33,6 @@ def logWarning(s: str) -> None:
 def escapeFileName(fileName: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
 
-def getSavesV1Folder(organizer: mobase.IOrganizer) -> str:
-    return os.path.join(
-        currentFileFolder,
-        "saves",
-        escapeFileName(organizer.managedGame().gameName()),
-    )
-
-def makeSavePathV1(organizer: mobase.IOrganizer, modName: str) -> str:
-    return os.path.join(
-        getSavesV1Folder(organizer),
-        escapeFileName(organizer.profileName()),
-        escapeFileName(modName) + ".json",
-    )
-
 def makeSavePathV2(organizer: mobase.IOrganizer, modName: str) -> str:
     return os.path.join(getSavesV2Folder(organizer), escapeFileName(modName) + ".json")
 
@@ -65,6 +51,17 @@ def getSavesV3Folder(organizer: mobase.IOrganizer) -> str:
         organizer.pluginDataPath(),
         "remember_installation_choices",
         "saves_v3",
+        escapeFileName(organizer.managedGame().gameName()),
+    )
+
+def makeSavePathV4(organizer: mobase.IOrganizer, modName: str) -> str:
+    return os.path.join(getSavesV4Folder(organizer), modName + ".json")
+
+def getSavesV4Folder(organizer: mobase.IOrganizer) -> str:
+    return os.path.join(
+        organizer.pluginDataPath(),
+        "remember_installation_choices",
+        "saves_v4",
         escapeFileName(organizer.managedGame().gameName()),
     )
 
@@ -320,12 +317,19 @@ class RememberModChoicesPlugin(mobase.IPlugin):
 
     def _onModInstalled(self, mod: mobase.IModInterface) -> None:
         if self.pendingSave:
-            path = makeSavePathV3(self._organizer, mod.name())
+            path = makeSavePathV4(self._organizer, mod.name())
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as file:
                 json.dump(self.pendingSave.toDict(), file, indent=4)
             logDebug(f"onModInstalled: pending save data was saved into '{path}'")
             self.pendingSave = None
+
+            # Remove save in older format.
+            oldPath = makeSavePathV3(self._organizer, mod.name())
+            try:
+                os.remove(oldPath)
+            except FileNotFoundError:
+                pass
 
     def _focusWindowChanged(self, window: Optional[QWindow]):
         if window != None:
@@ -355,16 +359,23 @@ class RememberModChoicesPlugin(mobase.IPlugin):
 
     def _modNameChanged(self, oldName: str, newName: str) -> None:
         logDebug(f"Mod name changed: old name '{oldName}', new name '{newName}'")
-        oldSavePath = makeSavePathV3(self._organizer, oldName)
-        newSavePath = makeSavePathV3(self._organizer, newName)
-        if oldSavePath == newSavePath or not os.path.exists(oldSavePath):
-            return
-        try:
-            os.remove(newSavePath)
-        except FileNotFoundError:
-            pass
-        os.rename(oldSavePath, newSavePath)
-        logDebug(f"Renamed save file '{oldSavePath}' to '{newSavePath}'")
+        for oldSavePath in [
+            makeSavePathV4(self._organizer, oldName),
+            makeSavePathV3(self._organizer, oldName),
+        ]:
+            if not os.path.exists(oldSavePath):
+                continue
+
+            newSavePath = makeSavePathV4(self._organizer, newName)
+            if oldSavePath == newSavePath:
+                break
+            try:
+                os.remove(newSavePath)
+            except FileNotFoundError:
+                pass
+            os.rename(oldSavePath, newSavePath)
+            logDebug(f"Renamed save file '{oldSavePath}' to '{newSavePath}'")
+            break
 
 def dumpChildrenWriteFile(obj: QObject):
     with open(os.path.join(currentFileFolder, "debug_dump_children.json"), "w") as file:
@@ -695,19 +706,26 @@ class FomodInstallerDialog():
         if self.saveData:
             return
         
-        savePath = makeSavePathV3(self.plugin._organizer, self.modName)
-        data: Optional[object] = None
-        try:
-            with open(savePath, "r") as file:
-                data = json.load(file)
-        except FileNotFoundError:
-            logDebug(f"No save for '{self.modName}', file path: '{savePath}'")
-        except json.JSONDecodeError as e:
-            logCritical(f"Failed to decode JSON for file '{savePath}': '{e.msg}'")
+        for savePath in (
+            makeSavePathV4(self.plugin._organizer, self.modName),
+            makeSavePathV3(self.plugin._organizer, self.modName)
+        ):
+            logDebug(f"Checking save file at path '{savePath}'")
+            data: Optional[object] = None
+            try:
+                with open(savePath, "r") as file:
+                    data = json.load(file)
+            except FileNotFoundError:
+                logDebug(f"No save for '{self.modName}', file path: '{savePath}'")
+                continue
+            except json.JSONDecodeError as e:
+                logCritical(f"Failed to decode JSON for file '{savePath}': '{e.msg}'")
+                continue
 
-        if isinstance(data, dict):
-            self.saveData = FomodSave(data)
-            self.updatedSaveData = FomodSave()
+            if isinstance(data, dict):
+                self.saveData = FomodSave(data)
+                self.updatedSaveData = FomodSave()
+            break
 
     def updateSaveWithCurrentStep(self) -> None:
         if not self.updatedSaveData:
