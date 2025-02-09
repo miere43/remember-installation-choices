@@ -20,27 +20,39 @@ currentFileFolder = os.path.dirname(os.path.realpath(__file__))
 
 def logInfo(s: str) -> None:
     try:
-        qInfo(f"[Remember Installation Choices] {s.encode('utf-8')}")
-    except:
-        pass
+        qInfo(f"[Remember Installation Choices] {s}")
+    except UnicodeEncodeError:
+        try:
+            qInfo(f"[Remember Installation Choices] {s.encode('utf-8')}")
+        except:
+            pass
 
 def logDebug(s: str) -> None:
     try:
-        qDebug(f"[Remember Installation Choices] {s.encode('utf-8')}")
-    except:
-        pass
+        qDebug(f"[Remember Installation Choices] {s}")
+    except UnicodeEncodeError:
+        try:
+            qDebug(f"[Remember Installation Choices] {s.encode('utf-8')}")
+        except:
+            pass
 
 def logCritical(s: str) -> None:
     try:
-        qCritical(f"[Remember Installation Choices] {s.encode('utf-8')}")
-    except:
-        pass
+        qCritical(f"[Remember Installation Choices] {s}")
+    except UnicodeEncodeError:
+        try:
+            qCritical(f"[Remember Installation Choices] {s.encode('utf-8')}")
+        except:
+            pass
 
 def logWarning(s: str) -> None:
     try:
-        qWarning(f"[Remember Installation Choices] {s.encode('utf-8')}")
-    except:
-        pass
+        qWarning(f"[Remember Installation Choices] {s}")
+    except UnicodeEncodeError:
+        try:
+            qWarning(f"[Remember Installation Choices] {s.encode('utf-8')}")
+        except:
+            pass
 
 def escapeFileName(fileName: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_.-]', '_', fileName)
