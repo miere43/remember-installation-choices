@@ -574,7 +574,7 @@ class FomodInstallerDialog():
     def __init__(self, plugin: RememberModChoicesPlugin, widget: QWidget):
         self.plugin = plugin
         self.widget = widget
-        self.widget.destroyed.connect(self.onDestroyed)
+        self.widget.destroyed.connect(self._onDestroyed)
         self.destroyed = False
         self.installClicked = False
         self.modName = ''
@@ -592,14 +592,15 @@ class FomodInstallerDialog():
         self.installButtonHandlers()
 
     def loadModName(self) -> None:
-        nameCombo = self.widget.findChild(QComboBox, "nameCombo")
-        if not nameCombo:
+        self._nameCombo = self.widget.findChild(QComboBox, "nameCombo")
+        if not self._nameCombo:
             self.modName = self.widget.windowTitle()
             logCritical(f"Failed to find nameCombo, using window title as mod name: '{self.modName}'")
             return
-        self.modName = nameCombo.currentText()
+        self._onModNameChangedSlot = self._nameCombo.currentTextChanged.connect(self._onModNameChanged)
+        self.modName = self._nameCombo.currentText()
 
-    def onDestroyed(self) -> None:
+    def _onDestroyed(self) -> None:
         if self.plugin.currentDialog == self:
             self.plugin.currentDialog = None
 
@@ -615,12 +616,20 @@ class FomodInstallerDialog():
         if not self.updatedSaveData:
             logDebug("FomodInstallerDialog: not saving, save data is missing")
             return
+        
+        if self._onModNameChangedSlot:
+            self._nameCombo.currentTextChanged.disconnect(self._onModNameChangedSlot)
+            self._onModNameChangedSlot = None
 
         path = makeSavePathV3(self.plugin._organizer, self.modName)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as file:
             json.dump(self.updatedSaveData.toDict(), file, indent=4)
         logDebug(f"FomodInstallerDialog: data saved into '{path}'")
+
+    def _onModNameChanged(self, modName: str) -> None:
+        self.modName = modName
+        logDebug(f"Mod name changed: '{modName}'")
 
     def installButtonHandlers(self) -> None:
         for button in [self.prevButton, self.nextButton]:
