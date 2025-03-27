@@ -284,7 +284,7 @@ class RememberModChoicesPlugin(mobase.IPlugin):
     def version(self) -> mobase.VersionInfo:
         # automatic version replacement, see 'scripts/make_build.py'
         # VERSION_BEGIN
-        return mobase.VersionInfo(1, 2, 3, 0)
+        return mobase.VersionInfo(1, 2, 4, 0)
         # VERSION_END
 
     def _setting(self, key: str) -> object:
@@ -707,16 +707,16 @@ class FomodInstallerDialog():
         logDebug(f"Mod name changed: '{modName}'")
 
     def installButtonHandlers(self) -> None:
+        if self.nextButton:
+            self.nextButton.pressed.connect(self._onNextButtonPressed)
+            self.nextButton.clicked.connect(self._onNextButtonClicked)
+    
         for button in [self.prevButton, self.nextButton]:
             if not button:
                 logCritical(f"Failed to find prev or next button in dialog")
                 continue
             button.pressed.connect(self.updateSaveWithCurrentStep)
             button.clicked.connect(self.loadStepAndApplySaveState)
-
-        if self.nextButton:
-            self.nextButton.pressed.connect(self._onNextButtonPressed)
-            self.nextButton.clicked.connect(self._onNextButtonClicked)
 
     def _onNextButtonPressed(self) -> None:
         self._nextButtonTextBeforeClick = self.nextButton.text()
@@ -775,6 +775,9 @@ class FomodInstallerDialog():
             saveStep.groups.append(saveGroup)
 
     def loadStepAndApplySaveState(self) -> None:
+        if self.installClicked:
+            return
+
         self.loadStep()
         if not self.currentStep or not self.saveData:
             return
